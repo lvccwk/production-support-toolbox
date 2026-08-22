@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { INCIDENT_SEVERITIES, INCIDENT_STATUSES } from "@/types";
 import type { Incident, IncidentInput, IncidentStatus, Severity } from "@/types";
+import { TransferButtons } from "@/components/TransferButtons";
 
 const EMPTY_FORM: IncidentInput = {
   title: "",
@@ -220,15 +221,18 @@ export function IncidentNotes() {
         title="Incident List"
         description="Search by title, system, environment, symptoms or notes."
         actions={
-          <Input
-            placeholder="Search incidents…"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              void refresh(e.target.value);
-            }}
-            className="w-64"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Search incidents…"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                void refresh(e.target.value);
+              }}
+              className="w-64"
+            />
+            <TransferButtons scope="incidents" onImported={() => void refresh(query)} />
+          </div>
         }
       >
         {loading ? (

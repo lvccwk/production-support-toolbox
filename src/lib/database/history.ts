@@ -93,15 +93,19 @@ export function getHistoryEntry(id: number): HistoryEntry | null {
   return row ? toHistoryEntry(row) : null;
 }
 
-export function createHistoryEntry(input: HistoryInput): HistoryEntry {
+export function createHistoryEntry(
+  input: HistoryInput,
+  opts?: { createdAt?: string },
+): HistoryEntry {
   const db = getDb();
-  const now = new Date().toISOString();
+  // Imports preserve the original created_at so dedupe hashes stay stable.
+  const createdAt = opts?.createdAt ?? new Date().toISOString();
   const result = db
     .prepare(
       `INSERT INTO history (created_at, tool, system, summary, severity, payload)
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(now, input.tool, input.system, input.summary, input.severity, input.payload);
+    .run(createdAt, input.tool, input.system, input.summary, input.severity, input.payload);
   return getHistoryEntry(Number(result.lastInsertRowid))!;
 }
 
