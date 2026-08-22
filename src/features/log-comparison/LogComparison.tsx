@@ -44,6 +44,19 @@ function buildReport(result: ComparisonResult): string {
   if (result.changedComponents.length > 0) {
     lines.push("", "Changed components:", ...result.changedComponents.map((e) => `  - ${e}`));
   }
+  if (result.errorClusters.added.length > 0) {
+    lines.push("", "New error kinds (cluster):");
+    for (const c of result.errorClusters.added) {
+      lines.push(`  + ${c.key} (${c.count} line${c.count === 1 ? "" : "s"})`);
+      lines.push(`      e.g. ${c.sample}`);
+    }
+  }
+  if (result.errorClusters.removed.length > 0) {
+    lines.push("", "Gone error kinds (cluster):");
+    for (const c of result.errorClusters.removed) {
+      lines.push(`  - ${c.key} (${c.count} line${c.count === 1 ? "" : "s"})`);
+    }
+  }
   if (result.addedLines.length > 0) {
     lines.push("", "Added error lines:", ...result.addedLines.map((l) => `  + ${l}`));
   }
@@ -247,9 +260,57 @@ export function LogComparison({ reopen }: { reopen?: ReopenRequest }) {
             </div>
           )}
 
+          {(result.errorClusters.added.length > 0 ||
+            result.errorClusters.removed.length > 0) && (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <ResultBlock title="New Error Kinds (cluster)">
+                {result.errorClusters.added.length > 0 ? (
+                  <ul className="space-y-2 px-3 py-2">
+                    {result.errorClusters.added.map((c) => (
+                      <li key={c.key} className="text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="font-mono text-[13px] font-medium text-red-700 dark:text-red-300">
+                          + {c.key}
+                        </span>
+                        <span className="ml-2 text-xs text-zinc-400 dark:text-zinc-500">
+                          {c.count} line{c.count === 1 ? "" : "s"}
+                        </span>
+                        <div className="mt-0.5 truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {c.sample}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">None</p>
+                )}
+              </ResultBlock>
+              <ResultBlock title="Gone Error Kinds (cluster)">
+                {result.errorClusters.removed.length > 0 ? (
+                  <ul className="space-y-2 px-3 py-2">
+                    {result.errorClusters.removed.map((c) => (
+                      <li key={c.key} className="text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="font-mono text-[13px] font-medium text-emerald-700 dark:text-emerald-300">
+                          − {c.key}
+                        </span>
+                        <span className="ml-2 text-xs text-zinc-400 dark:text-zinc-500">
+                          {c.count} line{c.count === 1 ? "" : "s"}
+                        </span>
+                        <div className="mt-0.5 truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {c.sample}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">None</p>
+                )}
+              </ResultBlock>
+            </div>
+          )}
+
           {result.addedLines.length > 0 && (
             <div className="mt-4">
-              <ResultBlock title="Added Lines (error-like)">
+              <ResultBlock title="Added Lines (error-like, noise-filtered)">
                 <pre className="overflow-x-auto px-3 py-2 font-mono text-[12px] leading-relaxed text-red-700 dark:text-red-300">
                   {result.addedLines.join("\n")}
                 </pre>
