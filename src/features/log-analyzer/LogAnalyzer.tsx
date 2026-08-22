@@ -18,6 +18,7 @@ import {
 } from "@/components/ui";
 import { extractLogInfo, isLogEmpty } from "@/lib/log-parser/parser";
 import { analyzeLog } from "@/lib/rules/engine";
+import { AiAnalysisPanel } from "@/components/AiAnalysisPanel";
 import type { LogParseResult } from "@/types";
 
 const SAMPLE_LOG = `2026-08-21 10:15:22 ERROR PaymentBatch transactionId=ABC123
@@ -211,6 +212,10 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
           {error && <ErrorNote message={error} />}
         </div>
       </Card>
+
+      {text.trim() && (
+        <AiAnalysisPanel log={text} ruleSeverity={result?.analysis.severity ?? null} />
+      )}
 
       {result && (
         <>

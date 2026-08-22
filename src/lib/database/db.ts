@@ -81,5 +81,32 @@ function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_incidents_updated_at ON incidents (updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_history_created_at ON history (created_at DESC);
+
+    -- Phase 3: LLM settings and analysis cache (additive; harmless pre-v2.0).
+    CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS analysis_cache (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      cache_key  TEXT NOT NULL UNIQUE,
+      tool       TEXT NOT NULL,
+      model      TEXT NOT NULL DEFAULT '',
+      result     TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    -- Optional audit trail for outbound AI calls (default OFF, see settings).
+    CREATE TABLE IF NOT EXISTS llm_calls (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      tool       TEXT NOT NULL,
+      provider   TEXT NOT NULL,
+      bytes_sent INTEGER NOT NULL,
+      redacted   INTEGER NOT NULL DEFAULT 1,
+      ok         INTEGER NOT NULL DEFAULT 1
+    );
   `);
 }
