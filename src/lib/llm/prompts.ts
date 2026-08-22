@@ -26,6 +26,8 @@ export function buildAnalysisSystemPrompt(): string {
     "If the facts are insufficient, write \"unknown\" for rootCause and set confidence below 0.3.",
     "evidenceLines must reference line numbers that actually appear in the evidence section.",
     "Your severity is advisory only and must be consistent with the rule engine severity where possible.",
+    "You must NOT use any tools, run any commands, or read/write files. Analysis only — answer directly.",
+    "Be concise: rootCause at most 3 sentences, nextSteps at most 5 items.",
     ANALYSIS_JSON_SCHEMA_HINT,
   ].join("\n");
 }
