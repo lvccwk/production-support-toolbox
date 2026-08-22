@@ -277,6 +277,7 @@ export function AiAnalysisPanel({
                 aiAnalysis: result.analysis,
               })}
               sensitiveText={log}
+              ai={result.analysis}
             />
           </div>
         </div>
