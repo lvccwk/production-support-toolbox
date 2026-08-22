@@ -30,6 +30,10 @@ const SOURCE_BARE_RE =
 const SOURCE_INLINE_RE =
   /\b([A-Za-z_][\w$]*\.(?:java|kt|scala|groovy|ts|js|jsx|tsx|py|c|cpp|cs|php))(?::(\d+))\b/g;
 
+/** Python frame: `File "/opt/app/ingest.py", line 42, in parse_row` */
+const SOURCE_PYTHON_RE =
+  /\bFile\s+"?([A-Za-z0-9_./\\-]+\.(?:pyw?))"?,\s*line\s+(\d+)(?:,\s*in\s+([^\s,]+))?/g;
+
 /** Explicit HTTP references: `HTTP 500`, `status=500`, `statusCode: 503`, `HTTP/1.1 500 ...` */
 const HTTP_EXPLICIT_RE =
   /\b(?:HTTP[/\s]*|HTTP\/[0-9.]+[\s:]+|status\s*[=:]\s*|statusCode\s*[=:]\s*|status_code\s*[=:]\s*|http_status\s*[=:]\s*|httpStatus\s*[=:]\s*)([1-5]\d\d)\b/gi;
@@ -41,6 +45,8 @@ const ERROR_LIKE_LINE_RE =
 
 const STACK_TRACE_RE = /\bat\s+[A-Za-z_][\w$.]{1,}/m;
 const CAUSED_BY_RE = /\bCaused\s+by:/;
+/** Python stack frame: `File "...py", line N, in ...` */
+const PYTHON_TRACE_RE = /\bFile\s+"?[A-Za-z0-9_./\\-]+\.pyw?"?,\s*line\s+\d+/;
 
 const LEVEL_TOKEN_IGNORE_RE = /^(TRACE|DEBUG|INFO|NOTICE|WARNING|WARN|ERROR|SEVERE|FATAL|CRITICAL)$/i;
 const COMPONENT_TOKEN_RE = /^[A-Za-z][A-Za-z0-9_.\-]*$/;
@@ -117,6 +123,9 @@ function extractSources(text: string): SourceRef[] {
   for (const m of text.matchAll(SOURCE_INLINE_RE)) {
     pushIfNew({ file: m[1], line: Number(m[2]), symbol: null });
   }
+  for (const m of text.matchAll(SOURCE_PYTHON_RE)) {
+    pushIfNew({ file: m[1], line: Number(m[2]), symbol: m[3] ?? null });
+  }
   return out.slice(0, 12);
 }
 
@@ -170,7 +179,8 @@ export function extractLogInfo(text: string): ExtractedLogInfo {
     exceptions: extractExceptions(text),
     sources,
     httpStatuses: extractHttpStatuses(text),
-    stackTrace: STACK_TRACE_RE.test(text) || CAUSED_BY_RE.test(text),
+    stackTrace:
+      STACK_TRACE_RE.test(text) || CAUSED_BY_RE.test(text) || PYTHON_TRACE_RE.test(text),
   };
 }
 

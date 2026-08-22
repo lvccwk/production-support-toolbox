@@ -77,3 +77,19 @@ at com.example.BatchJob.run(BatchJob.java:80)`;
     expect(info.components).not.toContain("started");
   });
 });
+describe("extractLogInfo — Python stack frames", () => {
+  it("extracts Python File/line/in frames", () => {
+    const log = `2026-08-21 10:00:00 ERROR IngestionJob
+ValueError: invalid literal for int(): 'abc'
+  File "/opt/app/ingest.py", line 42, in parse_row
+  File "/opt/app/jobs/run.py", line 7, in main`;
+    const info = extractLogInfo(log);
+    expect(info.sources[0]).toEqual({
+      file: "/opt/app/ingest.py",
+      line: 42,
+      symbol: "parse_row",
+    });
+    expect(info.sources[1]?.symbol).toBe("main");
+    expect(info.stackTrace).toBe(true);
+  });
+});

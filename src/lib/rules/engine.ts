@@ -1,20 +1,36 @@
 import type {
   ErrorType,
+  EvidenceLine,
   ExtractedLogInfo,
   LogAnalysis,
+  LogRule,
   Severity,
 } from "@/types";
 import { SEVERITY_ORDER } from "@/types";
 import { extractLogInfo } from "@/lib/log-parser/parser";
 import { RULES } from "./rules";
+import { triageUnknownError } from "./triage";
 
 /**
  * Rule-based log analysis engine (sections 4 & 5). Pure and deterministic:
  * given log text + extracted info it produces severity, error types, likely
  * root causes, investigation steps, suggested fixes and long-term
  * improvements. No AI API, no network, no I/O.
+ *
+ * Detection is line-scoped: a rule matches when any log line matches any of
+ * its patterns, and the matching lines become the rule's evidence.
  */
 
+const CRITICAL_LEVEL_WORDS = /\b(FATAL|SEVERE|CRITICAL)\b/i;
+const OUTAGE_WORDS =
+  /\b(production down|site down|outage|downtime|service unavailable|major incident)\b/i;
+const ERROR_LEVEL_LINE_RE = /\b(ERROR|SEVERE|FATAL|CRITICAL)\b/i;
+
+/**
+ * Generic checks are only appended AFTER the matched rules' own steps and
+ * never when no rule matched. At most GENERIC_TAIL_MAX, each marked
+ * `[generic]` so the reader can tell they are generic heuristics.
+ */
 const GENERIC_INVESTIGATION = [
   "Check input data.",
   "Check recent deployment.",
@@ -22,24 +38,20 @@ const GENERIC_INVESTIGATION = [
   "Review database result.",
   "Check related logs.",
 ];
+const GENERIC_TAIL_MAX = 2;
 
-const UNKNOWN_ERROR_CAUSES = [
-  "No known rule matched this error pattern.",
-  "Exception message or stack trace contains the best clues.",
-];
+const UNKNOWN_LONG_TERM =
+  "Add a new rule for this error pattern so it is recognised next time.";
+const UNKNOWN_FIX_SEARCH =
+  "Search the exact error text in the codebase and related logs.";
+const UNKNOWN_FIX_CLIENT =
+  "Validate the request payload, authentication and permissions of the rejected call.";
+const UNKNOWN_FIX_SERVER =
+  "Check the receiving service's health and logs, then trace the upstream call chain.";
 
-const UNKNOWN_ERROR_FIXES = [
-  "Search the exact error text in the codebase and related logs.",
-  "Review the exception message details and stack frame.",
-];
-
-const UNKNOWN_ERROR_LONG_TERM = [
-  "Add a new rule for this error pattern so it is recognised next time.",
-];
-
-const CRITICAL_LEVEL_WORDS = /\b(FATAL|SEVERE|CRITICAL)\b/i;
-const OUTAGE_WORDS =
-  /\b(production down|site down|outage|downtime|service unavailable|major incident)\b/i;
+const MAX_EVIDENCE_LINES_PER_RULE = 8;
+const DENSITY_ESCALATION_LINES = 5;
+const MULTI_RULE_ESCALATION_COUNT = 4;
 
 function rank(severity: Severity): number {
   return SEVERITY_ORDER[severity];
@@ -49,11 +61,29 @@ function maxSeverity(a: Severity, b: Severity): Severity {
   return rank(a) >= rank(b) ? a : b;
 }
 
+/** Raise severity by exactly one step (Critical stays Critical). */
+function escalate(severity: Severity): Severity {
+  switch (severity) {
+    case "Informational":
+      return "Low";
+    case "Low":
+      return "Medium";
+    case "Medium":
+      return "High";
+    default:
+      return "Critical";
+  }
+}
+
+function norm(s: string): string {
+  return s.trim().toLowerCase();
+}
+
 function dedupeStrings(items: string[], max = 20): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const item of items) {
-    const key = item.trim().toLowerCase().slice(0, 60);
+    const key = norm(item).slice(0, 60);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(item.trim());
@@ -66,12 +96,44 @@ function dedupeTypes(items: ErrorType[]): ErrorType[] {
   return [...new Set(items)];
 }
 
+/** Match rules against the log lines, collecting per-rule evidence. */
+function matchRules(
+  text: string,
+): Array<{ rule: LogRule; evidence: EvidenceLine[] }> {
+  const lines = text.split(/\r?\n/);
+  const out: Array<{ rule: LogRule; evidence: EvidenceLine[] }> = [];
+  for (const rule of RULES) {
+    const evidence: EvidenceLine[] = [];
+    for (let i = 0; i < lines.length && evidence.length < MAX_EVIDENCE_LINES_PER_RULE; i++) {
+      const line = lines[i];
+      if (rule.patterns.some((pattern) => pattern.test(line))) {
+        evidence.push({ line: i + 1, text: line.trim() });
+      }
+    }
+    if (evidence.length > 0) out.push({ rule, evidence });
+  }
+  return out;
+}
+
+/** Generic checks that are not already covered by the rules' own steps. */
+function genericTail(existing: string[]): string[] {
+  const seen = new Set(existing.map(norm));
+  const out: string[] = [];
+  for (const item of GENERIC_INVESTIGATION) {
+    if (seen.has(norm(item))) continue;
+    out.push(`[generic] ${item}`);
+    if (out.length >= GENERIC_TAIL_MAX) break;
+  }
+  return out;
+}
+
 /**
  * Analyse a log. `info` may be produced by extractLogInfo(text); the function
  * never throws.
  */
 export function analyzeLog(text: string, info: ExtractedLogInfo): LogAnalysis {
-  const matched = RULES.filter((rule) => rule.detect(text));
+  const matches = matchRules(text);
+  const matched = matches.map((m) => m.rule);
 
   // --- error types -------------------------------------------------------
   const hasErrorLevel = info.levels.some((level) =>
@@ -89,17 +151,29 @@ export function analyzeLog(text: string, info: ExtractedLogInfo): LogAnalysis {
       ? matched.map((r) => r.baseSeverity).reduce((a, b) => maxSeverity(a, b))
       : "Informational";
 
-  // Context-driven escalation (deterministic).
   if (isUnknown) severity = maxSeverity(severity, "Medium");
-  const hasFatalLevel = info.levels.some((l) =>
-    CRITICAL_LEVEL_WORDS.test(l),
-  );
+  const hasFatalLevel = info.levels.some((l) => CRITICAL_LEVEL_WORDS.test(l));
   if (hasFatalLevel) severity = maxSeverity(severity, "Critical");
   if (OUTAGE_WORDS.test(text)) severity = maxSeverity(severity, "High");
-
   if (info.httpStatuses.some((code) => code >= 500)) {
     severity = maxSeverity(severity, "High");
   }
+
+  // Context-driven escalation (deterministic):
+  // - many distinct rules firing at once,
+  // - many error-level lines in the log.
+  const errorLineCount = text
+    .split(/\r?\n/)
+    .filter((line) => ERROR_LEVEL_LINE_RE.test(line)).length;
+  if (matched.length >= MULTI_RULE_ESCALATION_COUNT) {
+    severity = escalate(severity);
+  }
+  if (errorLineCount >= DENSITY_ESCALATION_LINES) {
+    severity = escalate(severity);
+  }
+
+  // --- unknown-error triage ----------------------------------------------
+  const triage = isUnknown ? triageUnknownError(info) : null;
 
   // --- affected components ----------------------------------------------
   const ruleComponents = matched.flatMap((r) => r.affectedComponents);
@@ -121,23 +195,32 @@ export function analyzeLog(text: string, info: ExtractedLogInfo): LogAnalysis {
   const rootCauses = dedupeStrings([
     ...contextualCauses,
     ...matched.flatMap((r) => r.rootCauses),
-    ...(matched.length === 0 ? UNKNOWN_ERROR_CAUSES : []),
+    ...(triage ? triage.causes : []),
   ]);
 
   // --- immediate investigation -------------------------------------------
+  const ruleInvestigation = matched.flatMap((r) => r.investigation);
   const immediateInvestigation = dedupeStrings([
-    ...matched.flatMap((r) => r.investigation),
-    ...GENERIC_INVESTIGATION,
+    ...ruleInvestigation,
+    ...(triage ? triage.investigation : genericTail(ruleInvestigation)),
   ]);
 
   // --- suggestions -------------------------------------------------------
-  const suggestedFixes = dedupeStrings([
-    ...matched.flatMap((r) => r.suggestedFixes),
-    ...(matched.length === 0 ? UNKNOWN_ERROR_FIXES : []),
-  ]);
+  let suggestedFixes: string[];
+  if (matched.length > 0) {
+    suggestedFixes = dedupeStrings(matched.flatMap((r) => r.suggestedFixes));
+  } else if (triage) {
+    const fixes = [UNKNOWN_FIX_SEARCH];
+    if (triage.httpDirection === "client") fixes.unshift(UNKNOWN_FIX_CLIENT);
+    if (triage.httpDirection === "server") fixes.unshift(UNKNOWN_FIX_SERVER);
+    suggestedFixes = dedupeStrings(fixes);
+  } else {
+    suggestedFixes = [UNKNOWN_FIX_SEARCH];
+  }
+
   const longTermImprovements = dedupeStrings([
     ...matched.flatMap((r) => r.longTermImprovements),
-    ...(matched.length === 0 ? UNKNOWN_ERROR_LONG_TERM : []),
+    ...(matched.length === 0 && isUnknown ? [UNKNOWN_LONG_TERM] : []),
   ]);
 
   return {
@@ -149,6 +232,12 @@ export function analyzeLog(text: string, info: ExtractedLogInfo): LogAnalysis {
     suggestedFixes,
     longTermImprovements,
     matchedRuleIds: matched.map((r) => r.id),
+    matchedEvidence: matches.map(({ rule, evidence }) => ({
+      ruleId: rule.id,
+      ruleName: rule.name,
+      evidence,
+    })),
+    unknownTriage: triage,
   };
 }
 

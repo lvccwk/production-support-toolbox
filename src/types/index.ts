@@ -12,6 +12,24 @@ export type ErrorType =
   | "Validation Error"
   | "OutOfMemory"
   | "File Not Found"
+  | "Connection Pool Exhausted"
+  | "Thread Pool Exhausted"
+  | "SSL/TLS Error"
+  | "JSON Parse Error"
+  | "Serialization Error"
+  | "Disk Full"
+  | "Permission Error"
+  | "Slow Query"
+  | "Rate Limit"
+  | "Circuit Breaker"
+  | "Messaging Error"
+  | "Cache Error"
+  | "DNS Error"
+  | "Batch Job Failure"
+  | "Configuration Error"
+  | "Certificate Error"
+  | "WebSocket Error"
+  | "Encoding Error"
   | "Unknown Error";
 
 export const SEVERITY_ORDER: Record<Severity, number> = {
@@ -27,13 +45,35 @@ export interface LogRule {
   name: string;
   errorType: ErrorType;
   baseSeverity: Severity;
-  /** Static keywords/patterns used for matching. */
-  detect: (text: string) => boolean;
+  /**
+   * Detection patterns (non-global regexes, case-insensitivity decided per
+   * pattern). A rule matches when ANY log line matches ANY of its patterns;
+   * the matching lines become the rule's evidence.
+   */
+  patterns: RegExp[];
   affectedComponents: string[];
   rootCauses: string[];
   investigation: string[];
   suggestedFixes: string[];
   longTermImprovements: string[];
+}
+
+/** A line of the analysed log that triggered a rule (evidence). */
+export interface EvidenceLine {
+  /** 1-based line number in the original log. */
+  line: number;
+  /** Trimmed line text. */
+  text: string;
+}
+
+/** Structured unknown-error triage produced when no rule matched. */
+export interface UnknownTriage {
+  /** Language/framework hint derived from source file extensions. */
+  languageHint: string | null;
+  /** Direction hint from extracted HTTP statuses (4xx vs 5xx). */
+  httpDirection: "client" | "server" | null;
+  causes: string[];
+  investigation: string[];
 }
 
 /** Structured analysis produced by the rule engine. */
@@ -46,6 +86,10 @@ export interface LogAnalysis {
   suggestedFixes: string[];
   longTermImprovements: string[];
   matchedRuleIds: string[];
+  /** Evidence lines per matched rule (empty when a rule has no per-line matches). */
+  matchedEvidence: Array<{ ruleId: string; ruleName: string; evidence: EvidenceLine[] }>;
+  /** Present only when error-level log lines matched no rule. */
+  unknownTriage: UnknownTriage | null;
 }
 
 /** A class + line reference extracted from a stack frame, e.g. PaymentService.java:125 */
