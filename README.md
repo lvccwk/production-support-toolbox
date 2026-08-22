@@ -2,8 +2,9 @@
 
 A **local-first** web application for developers, system analysts and
 production support engineers: analyse logs, inspect technical data,
-troubleshoot incidents and perform common support tasks — **without an AI
-API and without sending data anywhere**.
+troubleshoot incidents and perform common support tasks — with a
+deterministic rule engine by default and an **optional, opt-in** AI
+deep-analysis mode. Nothing is sent anywhere unless you explicitly enable it.
 
 Built with **Next.js + TypeScript + Tailwind CSS + SQLite (`better-sqlite3`)**.
 No database server, no Docker, no Redis, no Kubernetes, no external
@@ -52,6 +53,8 @@ npm run start     # serve the production build
 | **Cron Helper** | 5-field cron → human description (e.g. `0 8 * * *` → “Runs every day at 08:00.”) and the next 5 execution times. Supports `*`, lists, ranges, steps, month/weekday names, and the standard day-of-month/day-of-week rule. |
 | **Incident Notes** | Incident records (title, system, environment, severity, detected time, symptoms, root cause, immediate fix, permanent fix, status, notes) stored in SQLite. Search, edit, delete. |
 | **Support History** | Explicitly saved analyses (date, tool, system, summary, severity). Search, delete, **re-open** (the original inputs are restored in the tool). Nothing is stored automatically. |
+| **AI Deep Analysis** *(optional)* | Opt-in LLM pass over the rule-engine result via the OpenRouter API (OpenAI-compatible REST). Always behind a privacy confirmation, redacts sensitive values before sending, truncates the context, validates the model's JSON strictly, caches per input, and labels results as unverified hints. |
+| **Settings** | OpenRouter readiness (key/model), privacy toggles (masking, audit trail), AI cache management, backup / export / import (JSON bundle or per-table CSV). |
 
 Every tool follows the same pattern: **Input → Action buttons → Result →
 Copy → Clear**, with large monospace text areas, dark mode, and desktop-first
@@ -61,19 +64,26 @@ responsive layout.
 
 - All processing happens **locally** in your browser or in the local Node
   process.
-- Nothing is uploaded; no external services are called (except the registry
-  at `npm install` time, like any npm project).
-- No telemetry, no analytics, no external tracking (Next.js telemetry is
-  disabled in the npm scripts).
-- Before saving an analysis, the app scans for common sensitive keywords
-  (`password`, `token`, `authorization`, `api_key`, `authorization`,
-  `client_secret`, …) and shows a warning — it never sanitises automatically
-  in Version 1; review content yourself before saving.
+- Nothing is uploaded and no external services are called by default (the
+  npm registry at install time is the only network access). No telemetry, no
+  analytics, no external tracking (Next.js telemetry is disabled in the npm
+  scripts).
+- **The only exception is the opt-in AI deep analysis**: when you enable
+  `PST_LLM_ENABLED=true` and press “AI 深度分析”, a redacted, truncated
+  context is sent to the model configured on OpenRouter. Before any
+  send you must confirm a privacy dialog; sensitive values
+  (`password`, `token`, `authorization`, `api_key`, `client_secret`, …) are
+  masked automatically (masking can be turned off in Settings — the UI then
+  warns you explicitly), and the audit-trail table (`llm_calls`) records only
+  byte sizes, never content.
+- Before saving an analysis, the app scans for common sensitive keywords and
+  shows a warning; it never sanitises automatically — review content yourself
+  before saving.
 
 ## How the log rule engine works
 
 `src/lib/rules/` implements a deterministic, keyword/pattern-based engine
-(no AI API):
+(the default analysis — no LLM involved):
 
 1. `src/lib/log-parser/parser.ts` extracts structured fields from the raw
    text: timestamps, log levels, components, identifiers, exception class
@@ -92,6 +102,33 @@ responsive layout.
 
 The engine is pure and unit-tested (`src/lib/rules/engine.test.ts`); adding
 a new detection is just adding one entry to `RULES`.
+
+## Optional AI deep analysis (OpenRouter)
+
+The AI pass is **disabled by default** (`PST_LLM_ENABLED !== "true"`). It
+calls the OpenRouter API directly (OpenAI-compatible REST) — no extra CLI to
+install:
+
+```bash
+cp .env.example .env
+PST_LLM_ENABLED=true
+OPENROUTER_API_KEY=sk-or-...        # stays server-side, never in the browser
+PST_OPENROUTER_MODEL=deepseek/deepseek-flash-v4
+```
+
+(Set `PST_OPENROUTER_MODEL` to the exact slug shown in your OpenRouter
+Models page — any OpenAI-compatible model works, including DeepSeek and
+Claude families.)
+
+How it works: the rule engine + parser run first; an identifier-masked,
+redacted and truncated context (head + tail + evidence lines ± 3, ≤ 300
+lines / ≤ 12 000 chars) plus the deterministic result are sent to the model
+(`POST /chat/completions`), which must return a strict JSON analysis
+(validated field-by-field client-side and server-side). Results are labelled
+as unverified hints and never override the rule engine. Identical inputs are
+served from a local `analysis_cache` (cache key includes the provider and
+model); an optional local audit trail (`llm_calls`) records only byte sizes
+and the masking flag. See Settings → OpenRouter 狀態.
 
 ## Project structure
 

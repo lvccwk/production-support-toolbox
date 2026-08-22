@@ -9,7 +9,7 @@ import {
   selectContextLines,
 } from "@/lib/llm/prompts";
 import { validateAiAnalysis } from "@/lib/llm/schema";
-import { OpenCodeProvider, resolveOpenCodeOptions } from "@/lib/llm/opencode";
+import { OpenRouterProvider, resolveOpenRouterOptions } from "@/lib/llm/openrouter";
 import {
   analysisCacheKey,
   getCachedAnalysis,
@@ -34,17 +34,17 @@ function errorResponse(error: unknown, status = 400): NextResponse {
 }
 
 /**
- * POST /api/ai/analyze — rule-grounded AI analysis via OpenCode.
+ * POST /api/ai/analyze — rule-grounded AI analysis via OpenRouter.
  * Guardrails: opt-in only (route always enabled, feature gate in env),
- * redaction before any text leaves, truncated context, hard timeout in the
- * adapter, JSON-schema validation of the response, per-input caching.
+ * redaction before any text leaves, truncated context, hard timeout,
+ * JSON-schema validation of the response, per-input caching.
  * Body: { log: string }
  */
 export async function POST(request: NextRequest) {
   try {
     if (process.env.PST_LLM_ENABLED !== "true") {
       throw new ToolError(
-        "AI analysis is disabled. Set PST_LLM_ENABLED=true (and install OpenCode) to enable it.",
+        "AI analysis is disabled. Set PST_LLM_ENABLED=true (and configure OpenRouter in .env) to enable it.",
       );
     }
 
@@ -77,12 +77,13 @@ export async function POST(request: NextRequest) {
     const bytesEstimate = context.reduce((n, l) => n + l.length, 0);
 
     // 4. Cache check (identical input + model => zero cost).
-    const options = resolveOpenCodeOptions();
-    const model = options.model ?? "";
+    const provider = new OpenRouterProvider(resolveOpenRouterOptions(process.env));
+    const model = provider.defaultModel ?? "";
     const cacheKey = analysisCacheKey({
       tool: "log-analyzer",
       input: outgoingLog,
       model,
+      provider: provider.id,
     });
     const cached = getCachedAnalysis(cacheKey);
     if (cached !== null) {
@@ -101,8 +102,7 @@ export async function POST(request: NextRequest) {
       // Stale/invalid cache entry: fall through and re-run.
     }
 
-    // 5. Call OpenCode.
-    const provider = new OpenCodeProvider(options);
+    // 5. Call OpenRouter.
     const prompt = buildAnalysisUserPrompt({
       tool: "log-analyzer",
       info,
@@ -116,7 +116,6 @@ export async function POST(request: NextRequest) {
     const result = await provider.analyze({
       system: buildAnalysisSystemPrompt(),
       user: prompt,
-      model: model || null,
     });
 
     const validated = validateAiAnalysis(result.json);

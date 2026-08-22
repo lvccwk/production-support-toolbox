@@ -7,12 +7,13 @@ import { getDb } from "@/lib/database/db";
  * cost nothing on repeat; any of those changing yields a fresh analysis.
  */
 
-const PROMPT_VERSION = 2; // bumped when the prompt/schema contract changes
+const PROMPT_VERSION = 3; // bumped when the prompt/schema contract changes
 
 export function analysisCacheKey(input: {
   tool: string;
   input: string;
   model: string;
+  provider: string;
 }): string {
   return createHash("sha256")
     .update(JSON.stringify({ ...input, promptVersion: PROMPT_VERSION }))

@@ -1,7 +1,8 @@
 /**
- * LLM provider abstraction (Phase 3). The rest of the application talks to
- * this interface; swapping the transport (OpenCode CLI today, a direct
- * OpenAI-compatible HTTP client tomorrow) means adding another provider.
+ * LLM provider abstraction. The rest of the application talks to this
+ * interface; today the only transport is the direct OpenRouter REST call
+ * (see openrouter.ts). Swapping or adding another transport (e.g. a local
+ * Ollama endpoint) means adding another provider class.
  */
 
 export interface LlmAnalysisRequest {
@@ -13,8 +14,6 @@ export interface LlmAnalysisRequest {
   model?: string | null;
   /** Hard timeout in ms (default from provider options). */
   timeoutMs?: number;
-  /** Extra environment variables for the provider process. */
-  env?: Record<string, string>;
 }
 
 export interface LlmProviderResult {
@@ -27,5 +26,7 @@ export interface LlmProviderResult {
 
 export interface LlmProvider {
   readonly id: string;
+  /** The model this provider is configured with (null when unset). */
+  readonly defaultModel: string | null;
   analyze(request: LlmAnalysisRequest): Promise<LlmProviderResult>;
 }
