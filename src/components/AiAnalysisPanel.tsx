@@ -9,19 +9,25 @@ import {
   ResultBlock,
   SeverityBadge,
 } from "@/components/ui";
+import { SaveButton } from "@/components/SaveButton";
 import { redactSensitiveValues } from "@/lib/llm/redact";
 import type { Severity } from "@/types";
 import type { AiAnalysis } from "@/lib/llm/schema";
 
 /**
  * AI deep-analysis panel (Phase 3). Everything is opt-in: the user presses
- * "AI 深度分析", sees a privacy modal (outgoing size + redaction list) and
- * only then is the request sent. Results are labelled as unverified hints
- * and never override the rule engine's severity.
+ * "AI 深度分析", sees a privacy modal (model, outgoing size, redaction list)
+ * and only then is the request sent. During the run a time-based progress
+ * bar shows the model being called; results are labelled as unverified
+ * hints (never overriding the rule engine) and can be saved to Support
+ * History via SaveButton.
  */
 
 interface AiStatus {
   enabled: boolean;
+  model: string | null;
+  modelLabel: string;
+  timeoutMs: number;
 }
 
 interface AnalyzeData {
@@ -41,9 +47,11 @@ function kb(bytes: number): string {
 export function AiAnalysisPanel({
   log,
   ruleSeverity,
+  system,
 }: {
   log: string;
   ruleSeverity: Severity | null;
+  system?: string;
 }) {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -126,7 +134,7 @@ export function AiAnalysisPanel({
 
   return (
     <Card
-      title="AI Deep Analysis (OpenCode)"
+      title="AI Deep Analysis (OpenRouter)"
       description="Optional. Sends redacted log context to your configured model — never raw secrets, never automatic."
       actions={
         <Button
@@ -142,7 +150,8 @@ export function AiAnalysisPanel({
       {confirmOpen && preview && (
         <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
           <p className="font-medium text-amber-800 dark:text-amber-300">
-            隱私確認 — 將送出約 {kb(preview.outgoingChars)} 至你的 OpenCode 模型
+            隱私確認 — 呼叫模型 <code className="font-mono">{status.modelLabel}</code>
+            ,將送出約 {kb(preview.outgoingChars)}
           </p>
           <ul className="mt-1 list-disc pl-5 text-amber-700 dark:text-amber-200">
             {preview.maskedKeys.length > 0 ? (
@@ -167,12 +176,7 @@ export function AiAnalysisPanel({
 
       {error && <ErrorNote message={error} />}
 
-      {loading && (
-        <div className="flex items-center gap-2 py-4 text-sm text-zinc-500 dark:text-zinc-400">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-zinc-300 border-t-blue-600" />
-          OpenCode agent 執行中(最多 120 秒)… {elapsed}s
-        </div>
-      )}
+      {loading && <ProgressBar status={status} elapsed={elapsed} />}
 
       {result && (
         <div className="space-y-4">
@@ -254,15 +258,62 @@ export function AiAnalysisPanel({
             {result.cached
               ? "來自本地快取(本次未有外送);"
               : `耗時 ${result.durationMs ?? "?"} ms;`}{" "}
-            送出約 {kb(result.outgoingChars)};provider {result.provider ?? "opencode"}
-            {result.model ? ` / ${result.model}` : ""};遮蔽
+            送出約 {kb(result.outgoingChars)};provider {result.provider ?? "opencode"} / 模型{" "}
+            {result.model ?? status.modelLabel};遮蔽
             {result.maskedKeys.length > 0
               ? `: ${result.maskedKeys.join(", ")}`
               : "無(未偵測到敏感值)"}
           </p>
+
+          <div className="border-t border-zinc-100 pt-3 dark:border-zinc-800">
+            <SaveButton
+              tool="log-analyzer"
+              system={system ?? ""}
+              summary={aiSummary(result)}
+              severity={result.analysis.severity}
+              payload={JSON.stringify({
+                input: log,
+                system: system ?? "",
+                aiAnalysis: result.analysis,
+              })}
+              sensitiveText={log}
+            />
+          </div>
         </div>
       )}
     </Card>
+  );
+}
+
+/** e.g. "AI (High, conf 72%): NullPointerException/HTTP Error in log" */
+function aiSummary(result: AnalyzeData): string {
+  const types = result.analysis.errorTypes.length
+    ? result.analysis.errorTypes.join("/")
+    : "log";
+  return `AI (${result.analysis.severity}, conf ${(result.analysis.confidence * 100).toFixed(0)}%): ${types}`;
+}
+
+/** Time-based progress while the OpenCode agent runs (cap from status). */
+function ProgressBar({ status, elapsed }: { status: AiStatus; elapsed: number }) {
+  const capSec = Math.max(1, Math.round(status.timeoutMs / 1000));
+  const pct = Math.min(100, Math.round((elapsed / capSec) * 100));
+  return (
+    <div className="space-y-1.5 py-2">
+      <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+        <span>
+          呼叫中: <code className="font-mono">{status.modelLabel}</code>
+        </span>
+        <span>
+          已等待 {elapsed}s / 上限 {capSec}s
+        </span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+        <div
+          className="h-full rounded-full bg-blue-500 transition-[width] duration-1000 ease-linear"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
   );
 }
 

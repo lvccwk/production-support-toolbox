@@ -22,6 +22,12 @@ const nextConfig: NextConfig = {
   // better-sqlite3 is a native module; keep it out of the bundler.
   serverExternalPackages: ["better-sqlite3"],
   allowedDevOrigins: allowedDevOrigins(),
+  // Local-only data (SQLite, backups, OpenCode sandbox) must never be traced
+  // into the deployment bundle — dynamic workDir paths also trigger the
+  // Next.js "whole project traced" warning otherwise.
+  outputFileTracingExcludes: {
+    "*": ["data/**"],
+  },
 };
 
 export default nextConfig;
