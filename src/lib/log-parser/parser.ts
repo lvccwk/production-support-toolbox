@@ -133,8 +133,11 @@ function extractSources(text: string): SourceRef[] {
 function extractComponents(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(LEVEL_RE)) {
-    const tail = text.slice(m.index + m[0].length);
-    const tokens = (tail.match(/\b([A-Za-z][A-Za-z0-9_.\-]*)\b/g) ?? []).slice(0, 3);
+    // Only inspect a small window after the level token. Slicing to the end
+    // of the file and re-scanning for every match is O(n²) on big logs.
+    const start = m.index + m[0].length;
+    const windowText = text.slice(start, start + 64);
+    const tokens = (windowText.match(/\b([A-Za-z][A-Za-z0-9_.\-]*)\b/g) ?? []).slice(0, 3);
     const picked = tokens.find((token) => {
       if (LEVEL_TOKEN_IGNORE_RE.test(token)) return false;
       if (COMPONENT_STOPWORDS.has(token.toLowerCase())) return false;

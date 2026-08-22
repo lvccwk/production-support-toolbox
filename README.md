@@ -30,6 +30,26 @@ npm run lint      # ESLint (eslint-config-next)
 npm run typecheck # tsc --noEmit
 ```
 
+## Evaluating the rule engine on real logs
+
+```bash
+npm run eval                 # scans data/loghub/*.log (LogHub-style datasets)
+npm run eval -- --dir <dir>  # point it at any folder with *.log files
+```
+
+For each file it reports flagged lines, the top firing rules and the
+processing time. When `anomaly_labels.txt` is present next to the logs
+(OpenStack / LogHub convention: a list of anomalous VM instance UUIDs),
+line-level **precision / recall / F1** are computed for the `*abnormal*`
+file — for the rule engine and for a plain `ERROR`-level keyword baseline —
+so you can see whether the engine adds value over a trivial heuristic.
+
+Caveats printed by the tool matter: OpenStack anomalies are behavioural
+(e.g. failed pings, latency) and mostly **do not carry `ERROR` keywords**,
+so a crash/exception-tuned rule engine scores near-zero recall there — that
+is an honest measurement of domain mismatch, not a bug. Java-stack-heavy
+datasets (e.g. Hadoop / HDFS_v1) fit the engine's design much better.
+
 ## Build
 
 ```bash
