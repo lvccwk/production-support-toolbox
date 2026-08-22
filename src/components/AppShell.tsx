@@ -63,7 +63,7 @@ const TOOLS: ToolDefinition[] = [
   { id: "cron", name: "Cron Helper", blurb: "Describe 5-field cron + next 5 runs", Component: CronHelper },
   { id: "incidents", name: "Incident Notes", blurb: "Local incident records (SQLite)", Component: IncidentNotes },
   { id: "history", name: "Support History", blurb: "Saved analyses: search, re-open, delete", Component: SupportHistory },
-  { id: "settings", name: "Settings", blurb: "OpenCode, privacy toggles, backup", Component: SettingsPage },
+  { id: "settings", name: "Settings", blurb: "OpenRouter, privacy toggles, backup", Component: SettingsPage },
 ];
 
 function toolIdFromHash(): string {

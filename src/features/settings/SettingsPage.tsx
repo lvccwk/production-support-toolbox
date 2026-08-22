@@ -5,19 +5,20 @@ import { Button, Card, ErrorNote, Note, ResultBlock } from "@/components/ui";
 import { TransferButtons } from "@/components/TransferButtons";
 
 /**
- * Settings page (Phase 3): OpenCode readiness, privacy toggles, cache
+ * Settings page (Phase 3): OpenRouter readiness, privacy toggles, cache
  * management and backup export. Static configuration (keys, binary path)
  * intentionally stays in .env — this page only reflects it.
  */
 
 interface AiStatusData {
   enabled: boolean;
-  bin: string;
-  version: string | null;
+  provider: string;
+  configured: boolean;
+  keyConfigured: boolean;
+  modelConfigured: boolean;
   model: string | null;
   modelLabel: string;
   timeoutMs: number;
-  workDir: string | null;
   masking: boolean;
   audit: boolean;
   cacheEntries: number;
@@ -83,7 +84,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <Card title="OpenCode 狀態" description="Read-only summary of the .env configuration.">
+      <Card title="OpenRouter 狀態" description="Read-only summary of the .env configuration.">
         {!status && !error && (
           <p className="text-sm text-zinc-400">Loading…</p>
         )}
@@ -99,12 +100,24 @@ export function SettingsPage() {
                   </span>
                 </li>
                 <li>
-                  執行檔: <code className="font-mono text-xs">{status.bin}</code>
-                  {status.version ? ` (v${status.version})` : " — 找不到版本(未安裝?)"}
+                  Transport: <code className="font-mono text-xs">OpenRouter (REST)</code>{" "}
+                  <span className={status.configured ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+                    {status.configured ? "已設定" : "未完成設定"}
+                  </span>
                 </li>
-                <li>模型: {status.modelLabel}</li>
+                <li>
+                  API Key (OPENROUTER_API_KEY):{" "}
+                  <span className={status.keyConfigured ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+                    {status.keyConfigured ? "已設定" : "缺少(server 端 .env)"}
+                  </span>
+                </li>
+                <li>
+                  模型: {status.modelLabel}
+                  {!status.modelConfigured && (
+                    <span className="text-red-600 dark:text-red-400"> (缺少 PST_OPENROUTER_MODEL)</span>
+                  )}
+                </li>
                 <li>超時: {(status.timeoutMs / 1000).toFixed(0)} 秒</li>
-                <li>沙箱目錄: {status.workDir ?? "—"}</li>
               </ul>
             </ResultBlock>
             <ResultBlock title="Privacy & Tooling">
@@ -162,7 +175,7 @@ export function SettingsPage() {
       </Card>
 
       <p className="text-xs leading-relaxed text-zinc-400 dark:text-zinc-500">
-        設定說明:Provider 金鑰與 OpenCode 選項全部在 <code>.env</code>(參考
+        設定說明:OPENROUTER_API_KEY 與 OpenRouter 選項全部在 <code>.env</code>(參考
         <code> .env.example</code>)。金鑰只存在伺服器端,永不傳到瀏覽器。
       </p>
     </div>

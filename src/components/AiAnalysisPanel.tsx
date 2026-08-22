@@ -28,6 +28,8 @@ interface AiStatus {
   model: string | null;
   modelLabel: string;
   timeoutMs: number;
+  /** Mirrors the server-side privacy toggle (Settings > 隱私設定). */
+  masking: boolean;
 }
 
 interface AnalyzeData {
@@ -78,8 +80,9 @@ export function AiAnalysisPanel({
     };
   }, []);
 
-  // Client-side redaction preview (same pure function the server uses).
-  const preview = log ? redactPreview(log) : null;
+  // Client-side redaction preview (mirrors the server guard, including the
+  // current masking toggle so the user is never told "masked" when it is off).
+  const preview = status ? redactPreview(log, status.masking) : null;
 
   const analyze = useCallback(async () => {
     setConfirmOpen(false);
@@ -126,8 +129,8 @@ export function AiAnalysisPanel({
   if (!status.enabled) {
     return (
       <Note>
-        AI deep analysis is disabled. Set <code>PST_LLM_ENABLED=true</code> and
-        install OpenCode (see Settings) to enable it.
+        AI deep analysis is disabled. Set <code>PST_LLM_ENABLED=true</code> and{" "}
+        configure OpenRouter in <code>.env</code> (see Settings) to enable it.
       </Note>
     );
   }
@@ -153,19 +156,26 @@ export function AiAnalysisPanel({
             隱私確認 — 呼叫模型 <code className="font-mono">{status.modelLabel}</code>
             ,將送出約 {kb(preview.outgoingChars)}
           </p>
-          <ul className="mt-1 list-disc pl-5 text-amber-700 dark:text-amber-200">
-            {preview.maskedKeys.length > 0 ? (
-              <li>
-                已自動遮蔽敏感值:
-                {preview.maskedKeys.map((k) => `[${k}]`).join(" ")}
-              </li>
-            ) : (
-              <li>未偵測到可遮蔽的敏感值(keyword 層面)</li>
-            )}
-          </ul>
+          {preview.masked ? (
+            <ul className="mt-1 list-disc pl-5 text-amber-700 dark:text-amber-200">
+              {preview.maskedKeys.length > 0 ? (
+                <li>
+                  已自動遮蔽敏感值:
+                  {preview.maskedKeys.map((k) => `[${k}]`).join(" ")}
+                </li>
+              ) : (
+                <li>未偵測到可遮蔽的敏感值(keyword 層面)</li>
+              )}
+            </ul>
+          ) : (
+            <p className="mt-1 text-red-700 dark:text-red-300">
+              ⚠ 自動遮蔽已關閉(Settings → 隱私設定)。原始 log 內容將直接送出,
+              請確認不含敏感資料。
+            </p>
+          )}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" size="sm" onClick={() => void analyze()}>
-              以遮蔽模式傳送
+              {preview.masked ? "以遮蔽模式傳送" : "仍要傳送(未遮蔽)"}
             </Button>
             <Button variant="secondary" size="sm" onClick={() => setConfirmOpen(false)}>
               取消
@@ -277,7 +287,7 @@ export function AiAnalysisPanel({
             {result.cached
               ? "來自本地快取(本次未有外送);"
               : `耗時 ${result.durationMs ?? "?"} ms;`}{" "}
-            送出約 {kb(result.outgoingChars)};provider {result.provider ?? "opencode"} / 模型{" "}
+            送出約 {kb(result.outgoingChars)};provider {result.provider ?? "openrouter"} / 模型{" "}
             {result.model ?? status.modelLabel};遮蔽
             {result.maskedKeys.length > 0
               ? `: ${result.maskedKeys.join(", ")}`
@@ -313,7 +323,7 @@ function aiSummary(result: AnalyzeData): string {
   return `AI (${result.analysis.severity}, conf ${(result.analysis.confidence * 100).toFixed(0)}%): ${types}`;
 }
 
-/** Time-based progress while the OpenCode agent runs (cap from status). */
+/** Time-based progress while the OpenRouter request runs (cap from status). */
 function ProgressBar({ status, elapsed }: { status: AiStatus; elapsed: number }) {
   const capSec = Math.max(1, Math.round(status.timeoutMs / 1000));
   const pct = Math.min(100, Math.round((elapsed / capSec) * 100));
@@ -337,11 +347,19 @@ function ProgressBar({ status, elapsed }: { status: AiStatus; elapsed: number })
   );
 }
 
-function redactPreview(log: string): { outgoingChars: number; maskedKeys: string[] } {
-  // Pure client-side mirror of the server guard; masking only when enabled.
+function redactPreview(
+  log: string,
+  masking: boolean,
+): { outgoingChars: number; maskedKeys: string[]; masked: boolean } {
+  if (!masking) {
+    // Server sends the RENDERED context (truncated), not the whole log; the
+    // estimate is a rough upper bound for the confirm dialog.
+    return { outgoingChars: log.length, maskedKeys: [], masked: false };
+  }
   const masked = redactSensitiveValues(log);
   return {
     outgoingChars: masked.text.length,
     maskedKeys: masked.maskedKeys,
+    masked: true,
   };
 }

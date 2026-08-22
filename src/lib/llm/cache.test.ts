@@ -19,20 +19,30 @@ afterAll(() => {
 
 const sample = { severity: "High", rootCause: "cached cause" };
 
+/** Cache-key helper: every entry carries the provider that produced it. */
+function key(overrides: Partial<{ tool: string; input: string; model: string; provider: string }> = {}) {
+  return analysisCacheKey({
+    tool: "log-analyzer",
+    input: "abc",
+    model: "m",
+    provider: "openrouter",
+    ...overrides,
+  });
+}
+
 describe("analysis cache", () => {
   it("misses on empty cache", () => {
-    const key = analysisCacheKey({ tool: "log-analyzer", input: "abc", model: "m" });
-    expect(getCachedAnalysis(key)).toBeNull();
+    expect(getCachedAnalysis(key())).toBeNull();
   });
 
   it("round-trips a stored result", () => {
-    const key = analysisCacheKey({ tool: "log-analyzer", input: "abc", model: "m" });
-    putCachedAnalysis(key, "log-analyzer", "m", sample);
-    expect(getCachedAnalysis(key)).toEqual(sample);
+    const cacheKey = key();
+    putCachedAnalysis(cacheKey, "log-analyzer", "m", sample);
+    expect(getCachedAnalysis(cacheKey)).toEqual(sample);
   });
 
   it("is stable for identical inputs and distinct for changed ones", () => {
-    const base = { tool: "log-analyzer", input: "same log", model: "m" };
+    const base = { tool: "log-analyzer", input: "same log", model: "m", provider: "openrouter" };
     expect(analysisCacheKey(base)).toBe(analysisCacheKey(base));
     expect(analysisCacheKey(base)).not.toBe(
       analysisCacheKey({ ...base, model: "other" }),
@@ -40,11 +50,15 @@ describe("analysis cache", () => {
     expect(analysisCacheKey(base)).not.toBe(
       analysisCacheKey({ ...base, input: "other log" }),
     );
+    // Different transport => different cache bucket.
+    expect(analysisCacheKey(base)).not.toBe(
+      analysisCacheKey({ ...base, provider: "ollama" }),
+    );
   });
 
   it("overwrites on conflict with the same key", () => {
-    const key = analysisCacheKey({ tool: "log-analyzer", input: "abc", model: "m" });
-    putCachedAnalysis(key, "log-analyzer", "m", { severity: "Low" });
-    expect(getCachedAnalysis(key)).toEqual({ severity: "Low" });
+    const cacheKey = key();
+    putCachedAnalysis(cacheKey, "log-analyzer", "m", { severity: "Low" });
+    expect(getCachedAnalysis(cacheKey)).toEqual({ severity: "Low" });
   });
 });
