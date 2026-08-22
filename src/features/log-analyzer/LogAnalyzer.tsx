@@ -69,6 +69,32 @@ function buildReport(result: LogParseResult): string {
   lines.push("");
   lines.push("Long-term improvements:");
   lines.push(...analysis.longTermImprovements.map((f) => `  - ${f}`));
+  if (analysis.matchedEvidence.length > 0) {
+    lines.push("");
+    lines.push("Matched rules (evidence):");
+    for (const m of analysis.matchedEvidence) {
+      lines.push(
+        `  - ${m.ruleName}: ${m.evidence.map((e) => `line ${e.line}`).join(", ")}`,
+      );
+    }
+  }
+  if (analysis.unknownTriage) {
+    lines.push("");
+    lines.push("Unknown error triage:");
+    if (analysis.unknownTriage.languageHint) {
+      lines.push(`  Language hint: ${analysis.unknownTriage.languageHint}`);
+    }
+    if (analysis.unknownTriage.httpDirection) {
+      const direction =
+        analysis.unknownTriage.httpDirection === "client"
+          ? "client-side (4xx)"
+          : "server-side (5xx)";
+      lines.push(`  Direction: ${direction}`);
+    }
+    lines.push(
+      `  Triage causes: ${analysis.unknownTriage.causes.join(" | ")}`,
+    );
+  }
   return lines.join("\n");
 }
 
@@ -284,6 +310,61 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                 </ResultBlock>
               </div>
             </div>
+
+            {result.analysis.matchedEvidence.length > 0 && (
+              <div className="mt-4">
+                <ResultBlock title="Rule Match Evidence">
+                  <ul className="space-y-2 px-3 py-2">
+                    {result.analysis.matchedEvidence.map((m) => (
+                      <li key={m.ruleId} className="text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="font-medium text-zinc-600 dark:text-zinc-300">
+                          {m.ruleName}
+                        </span>
+                        <span className="ml-2 text-xs text-zinc-400 dark:text-zinc-500">
+                          hit {m.evidence.length} line{m.evidence.length === 1 ? "" : "s"}
+                        </span>
+                        <ul className="mt-1 space-y-0.5 pl-4">
+                          {m.evidence.slice(0, 6).map((e) => (
+                            <li
+                              key={e.line}
+                              className="font-mono text-[12px] text-zinc-500 dark:text-zinc-400"
+                            >
+                              L{e.line}:{" "}
+                              {e.text.length > 110 ? `${e.text.slice(0, 110)}…` : e.text}
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                </ResultBlock>
+              </div>
+            )}
+
+            {result.analysis.unknownTriage && (
+              <div className="mt-4">
+                <ResultBlock title="Unknown Error — Analysis Context">
+                  <ul className="space-y-1 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200">
+                    <li>
+                      <span className="font-medium text-zinc-600 dark:text-zinc-300">
+                        Language / framework:
+                      </span>{" "}
+                      {result.analysis.unknownTriage.languageHint ?? "unrecognised"}
+                    </li>
+                    <li>
+                      <span className="font-medium text-zinc-600 dark:text-zinc-300">
+                        HTTP direction:
+                      </span>{" "}
+                      {result.analysis.unknownTriage.httpDirection === "client"
+                        ? "client-side (4xx)"
+                        : result.analysis.unknownTriage.httpDirection === "server"
+                          ? "server-side (5xx)"
+                          : "no HTTP status found"}
+                    </li>
+                  </ul>
+                </ResultBlock>
+              </div>
+            )}
           </Card>
 
           <Card title="Extracted Information">
