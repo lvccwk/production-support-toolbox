@@ -12,22 +12,26 @@ Output ONLY a JSON object (no prose) with exactly these fields:
 {
   "severity": "Critical|High|Medium|Low|Informational",
   "errorTypes": ["string", ...],
-  "rootCause": "1-3 sentences",
+  "rootCause": "1-3 sentences (English)",
+  "rootCauseZh": "1-3 sentences (Traditional Chinese, zh-Hant)",
   "evidenceLines": [1, 5],
-  "nextSteps": ["step", ...],
+  "nextSteps": ["step", ...] (English),
+  "nextStepsZh": ["step", ...] (Traditional Chinese, zh-Hant),
   "confidence": 0.0-1.0,
-  "explanation": "reasoning based only on the provided facts"
+  "explanation": "reasoning based only on the provided facts (English)",
+  "explanationZh": "same reasoning in Traditional Chinese (zh-Hant)"
 }`;
 
 export function buildAnalysisSystemPrompt(): string {
   return [
     "You are a senior production support engineer analysing application logs.",
     "You answer ONLY from the facts and evidence lines provided in the message — never invent line numbers, file names or components that are not listed.",
-    "If the facts are insufficient, write \"unknown\" for rootCause and set confidence below 0.3.",
+    "If the facts are insufficient, write \"unknown\" for rootCause (and rootCauseZh) and set confidence below 0.3.",
     "evidenceLines must reference line numbers that actually appear in the evidence section.",
     "Your severity is advisory only and must be consistent with the rule engine severity where possible.",
     "You must NOT use any tools, run any commands, or read/write files. Analysis only — answer directly.",
     "Be concise: rootCause at most 3 sentences, nextSteps at most 5 items.",
+    "ALL prose fields must be bilingual: provide every field that ends in Zh in Traditional Chinese (zh-Hant, e.g. 繁體中文), and the plain fields in English. Do NOT translate technical identifiers, exception names or file paths.",
     ANALYSIS_JSON_SCHEMA_HINT,
   ].join("\n");
 }

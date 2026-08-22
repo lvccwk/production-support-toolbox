@@ -269,9 +269,15 @@ export interface AiAnalysis {
   severity: Severity;
   errorTypes: string[];
   rootCause: string;
+  /** Traditional Chinese version of rootCause (bilingual output). */
+  rootCauseZh: string;
   /** 1-based line numbers referenced by the model. */
   evidenceLines: number[];
   nextSteps: string[];
+  /** Traditional Chinese version of nextSteps. */
+  nextStepsZh: string[];
   confidence: number;
   explanation: string;
+  /** Traditional Chinese version of explanation (optional). */
+  explanationZh?: string;
 }

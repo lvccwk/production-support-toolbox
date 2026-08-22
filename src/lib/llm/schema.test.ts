@@ -5,10 +5,13 @@ const VALID = {
   severity: "High",
   errorTypes: ["NullPointerException"],
   rootCause: "A null value was dereferenced.",
+  rootCauseZh: "空值被解除引用。",
   evidenceLines: [2, 3],
   nextSteps: ["Validate input", "Check caller"],
+  nextStepsZh: ["驗證輸入", "檢查呼叫端"],
   confidence: 0.8,
   explanation: "Evidence line 2 shows the NPE.",
+  explanationZh: "證據第 2 行顯示 NPE。",
 };
 
 describe("validateAiAnalysis", () => {
@@ -42,6 +45,20 @@ describe("validateAiAnalysis", () => {
     expect(validateAiAnalysis(null)).toBeNull();
     expect(validateAiAnalysis([VALID])).toBeNull();
     expect(validateAiAnalysis("json")).toBeNull();
+  });
+
+  it("requires the Chinese root cause and next steps", () => {
+    expect(validateAiAnalysis({ ...VALID, rootCauseZh: "  " })).toBeNull();
+    expect(validateAiAnalysis({ ...VALID, rootCauseZh: undefined })).toBeNull();
+    expect(validateAiAnalysis({ ...VALID, nextStepsZh: "not an array" })).toBeNull();
+  });
+
+  it("allows omitting the Chinese explanation (falls back to English)", () => {
+    const result = validateAiAnalysis({
+      ...VALID,
+      explanationZh: undefined,
+    });
+    expect(result?.explanationZh).toBe("");
   });
 
   it("caps evidence lines but keeps the first ones", () => {
