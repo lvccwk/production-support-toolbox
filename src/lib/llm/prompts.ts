@@ -1,0 +1,84 @@
+import type { ExtractedLogInfo, LogAnalysis } from "@/types";
+
+/**
+ * Prompt construction (Phase 3, section 7.3). The model NEVER receives the
+ * raw log: it receives (a) structured facts from the parser, (b) the rule
+ * engine's deterministic result, (c) redacted evidence lines. All identifier
+ * VALUES are masked so user/trace ids do not leave the machine.
+ */
+
+export const ANALYSIS_JSON_SCHEMA_HINT = `
+Output ONLY a JSON object (no prose) with exactly these fields:
+{
+  "severity": "Critical|High|Medium|Low|Informational",
+  "errorTypes": ["string", ...],
+  "rootCause": "1-3 sentences",
+  "evidenceLines": [1, 5],
+  "nextSteps": ["step", ...],
+  "confidence": 0.0-1.0,
+  "explanation": "reasoning based only on the provided facts"
+}`;
+
+export function buildAnalysisSystemPrompt(): string {
+  return [
+    "You are a senior production support engineer analysing application logs.",
+    "You answer ONLY from the facts and evidence lines provided in the message — never invent line numbers, file names or components that are not listed.",
+    "If the facts are insufficient, write \"unknown\" for rootCause and set confidence below 0.3.",
+    "evidenceLines must reference line numbers that actually appear in the evidence section.",
+    "Your severity is advisory only and must be consistent with the rule engine severity where possible.",
+    ANALYSIS_JSON_SCHEMA_HINT,
+  ].join("\n");
+}
+
+export interface AnalysisPromptInput {
+  tool: string;
+  info: ExtractedLogInfo;
+  analysis: LogAnalysis;
+  /** Redacted evidence lines with 1-based line numbers. */
+  evidence: Array<{ ruleId: string; ruleName: string; lines: Array<{ line: number; text: string }> }>;
+}
+
+function maskIdentifiers(info: ExtractedLogInfo): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(info.identifiers).map(([key]) => [key, "[ID]"]),
+  );
+}
+
+export function buildAnalysisUserPrompt(input: AnalysisPromptInput): string {
+  const { info, analysis, evidence } = input;
+  const facts = {
+    tool: input.tool,
+    levels: info.levels,
+    components: info.components,
+    exceptions: info.exceptions,
+    sources: info.sources.map(
+      (s) => `${s.symbol ? `${s.symbol} ` : ""}${s.file}${s.line ? `:${s.line}` : ""}`,
+    ),
+    httpStatuses: info.httpStatuses,
+    identifiers: maskIdentifiers(info),
+  };
+  return [
+    "FACTS (parsed from the log):",
+    JSON.stringify(facts, null, 2),
+    "",
+    "RULE ENGINE RESULT (deterministic, local):",
+    JSON.stringify(
+      {
+        severity: analysis.severity,
+        errorTypes: analysis.errorTypes,
+        matchedRules: analysis.matchedRuleIds,
+        rootCauses: analysis.rootCauses,
+      },
+      null,
+      2,
+    ),
+    "",
+    "EVIDENCE LINES (1-based line numbers):",
+    ...evidence.flatMap((m) => [
+      `# ${m.ruleName} (${m.ruleId}):`,
+      ...m.lines.map((l) => `L${l.line}: ${l.text}`),
+    ]),
+    "",
+    "Answer with the JSON analysis only.",
+  ].join("\n");
+}
