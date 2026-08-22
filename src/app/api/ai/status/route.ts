@@ -39,6 +39,8 @@ export async function GET() {
       bin,
       version,
       model: options.model ?? null,
+      /** Human label: configured model or "自動(未指定)". */
+      modelLabel: options.model ? options.model : "自動(未指定)",
       timeoutMs: options.timeoutMs ?? 120_000,
       workDir: options.workDir ?? null,
       masking: isMaskingEnabled(),

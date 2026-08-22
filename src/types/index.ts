@@ -250,6 +250,8 @@ export interface HistoryEntry {
   severity: Severity | null;
   /** JSON payload used to re-open the saved analysis. */
   payload: string;
+  /** Structured AI deep-analysis (null when the entry has none). */
+  ai: AiAnalysis | null;
 }
 
 export interface HistoryInput {
@@ -258,4 +260,18 @@ export interface HistoryInput {
   summary: string;
   severity: Severity | null;
   payload: string;
+  /** Optional structured AI analysis (Phase 3), stored and exported. */
+  ai?: AiAnalysis | null;
+}
+
+/** Structured LLM deep-analysis (schema-validated before storage). */
+export interface AiAnalysis {
+  severity: Severity;
+  errorTypes: string[];
+  rootCause: string;
+  /** 1-based line numbers referenced by the model. */
+  evidenceLines: number[];
+  nextSteps: string[];
+  confidence: number;
+  explanation: string;
 }

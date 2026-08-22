@@ -5,7 +5,7 @@
  * cap) rather than failed.
  */
 
-import type { Severity } from "@/types";
+import type { AiAnalysis, Severity } from "@/types";
 
 const ALLOWED_SEVERITIES: Severity[] = [
   "Critical",
@@ -15,16 +15,8 @@ const ALLOWED_SEVERITIES: Severity[] = [
   "Informational",
 ];
 
-export interface AiAnalysis {
-  severity: Severity;
-  errorTypes: string[];
-  rootCause: string;
-  /** 1-based line numbers, must be integers >= 1. */
-  evidenceLines: number[];
-  nextSteps: string[];
-  confidence: number;
-  explanation: string;
-}
+// Re-exported so existing importers of the schema module keep working.
+export type { AiAnalysis } from "@/types";
 
 const LIMITS = {
   errorTypes: 10,

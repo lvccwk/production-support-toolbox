@@ -123,7 +123,10 @@ export class OpenCodeProvider implements LlmProvider {
     const args = ["run"];
     // Model override is version-dependent; the stub tests tolerate it.
     if (model) args.push("--model", model);
-    args.push(request.user);
+    // opencode run accepts ONE message; the system prompt must be embedded,
+    // otherwise the schema/tool constraints are silently lost.
+    const message = [request.system, request.user].filter(Boolean).join("\n\n");
+    args.push(message);
     if (this.options.extraArgs) args.push(...this.options.extraArgs);
 
     const childEnv: NodeJS.ProcessEnv = {
@@ -139,6 +142,10 @@ export class OpenCodeProvider implements LlmProvider {
           cwd,
           env: childEnv,
           shell: false,
+          // stdin must be closed IMMEDIATELY: opencode waits on an open
+          // stdin pipe, which hangs `opencode run` forever when spawned
+          // from a server (observed: 240s timeout with a 12s CLI run).
+          stdio: ["ignore", "pipe", "pipe"],
         });
       } catch {
         reject(new ToolError(`Failed to start '${bin ?? "opencode"}'.`));

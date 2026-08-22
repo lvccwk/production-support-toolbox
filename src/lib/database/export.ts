@@ -213,12 +213,26 @@ export function incidentsToCsv(incidents: Incident[]): string {
 
 export function historyToCsv(entries: HistoryEntry[]): string {
   const header = [
-    "id", "createdAt", "tool", "system", "summary", "severity", "payload",
+    "id", "createdAt", "tool", "system", "summary", "severity",
+    "ai_severity", "ai_confidence", "ai_error_types", "ai_root_cause",
+    "ai_evidence_lines", "ai_next_steps", "ai_explanation",
+    "payload",
   ];
-  const rows = entries.map((e) =>
-    [e.id, e.createdAt, e.tool, e.system, e.summary, e.severity ?? "", e.payload]
+  const rows = entries.map((e) => {
+    const ai = e.ai;
+    return [
+      e.id, e.createdAt, e.tool, e.system, e.summary, e.severity ?? "",
+      ai?.severity ?? "",
+      ai?.confidence ?? "",
+      ai ? JSON.stringify(ai.errorTypes) : "",
+      ai?.rootCause ?? "",
+      ai ? JSON.stringify(ai.evidenceLines) : "",
+      ai ? JSON.stringify(ai.nextSteps) : "",
+      ai?.explanation ?? "",
+      e.payload,
+    ]
       .map(csvEscape)
-      .join(","),
-  );
+      .join(",");
+  });
   return `\uFEFF${[header.map(csvEscape).join(","), ...rows].join("\r\n")}`;
 }

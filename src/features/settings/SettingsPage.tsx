@@ -15,6 +15,7 @@ interface AiStatusData {
   bin: string;
   version: string | null;
   model: string | null;
+  modelLabel: string;
   timeoutMs: number;
   workDir: string | null;
   masking: boolean;
@@ -101,7 +102,7 @@ export function SettingsPage() {
                   執行檔: <code className="font-mono text-xs">{status.bin}</code>
                   {status.version ? ` (v${status.version})` : " — 找不到版本(未安裝?)"}
                 </li>
-                <li>模型: {status.model ?? "OpenCode 設定為準"}</li>
+                <li>模型: {status.modelLabel}</li>
                 <li>超時: {(status.timeoutMs / 1000).toFixed(0)} 秒</li>
                 <li>沙箱目錄: {status.workDir ?? "—"}</li>
               </ul>

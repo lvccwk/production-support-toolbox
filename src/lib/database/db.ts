@@ -76,7 +76,8 @@ function migrate(database: Database.Database): void {
       system TEXT NOT NULL DEFAULT '',
       summary TEXT NOT NULL DEFAULT '',
       severity TEXT,
-      payload TEXT NOT NULL DEFAULT ''
+      payload TEXT NOT NULL DEFAULT '',
+      ai_json TEXT NOT NULL DEFAULT ''
     );
 
     CREATE INDEX IF NOT EXISTS idx_incidents_updated_at ON incidents (updated_at DESC);
@@ -109,4 +110,13 @@ function migrate(database: Database.Database): void {
       ok         INTEGER NOT NULL DEFAULT 1
     );
   `);
+
+  // Databases created before the AI feature lack ai_json; add it (guarded so
+  // CREATE TABLE IF NOT EXISTS on a fresh file does not trip over itself).
+  const historyColumns = database.prepare("PRAGMA table_info(history)").all() as Array<{
+    name: string;
+  }>;
+  if (!historyColumns.some((c) => c.name === "ai_json")) {
+    database.exec("ALTER TABLE history ADD COLUMN ai_json TEXT NOT NULL DEFAULT ''");
+  }
 }

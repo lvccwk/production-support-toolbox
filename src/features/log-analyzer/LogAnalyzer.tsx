@@ -214,7 +214,11 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
       </Card>
 
       {text.trim() && (
-        <AiAnalysisPanel log={text} ruleSeverity={result?.analysis.severity ?? null} />
+        <AiAnalysisPanel
+          log={text}
+          ruleSeverity={result?.analysis.severity ?? null}
+          system={system}
+        />
       )}
 
       {result && (

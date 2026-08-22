@@ -185,6 +185,76 @@ describe("CSV export", () => {
     // JSON payload survives with quotes escaped (CSV doubling).
     expect(csv).toContain('{""input"":""demo log""}');
   });
+
+  it("exports AI analysis as flat CSV columns", () => {
+    const ai = {
+      severity: "High" as const,
+      errorTypes: ["NullPointerException"],
+      rootCause: "null deref at line 2",
+      evidenceLines: [2],
+      nextSteps: ["fix the null guard"],
+      confidence: 0.82,
+      explanation: "stack frame points to the dereference",
+    };
+    createHistoryEntry(
+      validateHistoryInput({
+        tool: "log-analyzer",
+        system: "PaymentBatch",
+        summary: "AI analysis",
+        severity: "High",
+        payload: "{}",
+        ai,
+      }),
+      { createdAt: "2026-08-21T10:00:00.000Z" },
+    );
+    const csv = historyToCsv(exportAllData().history);
+    expect(csv).toContain('"ai_severity","ai_confidence","ai_error_types"');
+    expect(csv).toContain('"High","0.82","[""NullPointerException""]"');
+    expect(csv).toContain('null deref at line 2');
+    expect(csv).toContain('"[2]"');
+  });
+
+  it("preserves AI analysis through a JSON export/import round-trip", () => {
+    const ai = {
+      severity: "Medium" as const,
+      errorTypes: ["Timeout"],
+      rootCause: "slow dependency",
+      evidenceLines: [1],
+      nextSteps: ["add backoff"],
+      confidence: 0.6,
+      explanation: "read timeout observed",
+    };
+    createHistoryEntry(
+      validateHistoryInput({
+        tool: "log-analyzer",
+        system: "",
+        summary: "round trip",
+        severity: "Medium",
+        payload: "{}",
+        ai,
+      }),
+      { createdAt: "2026-08-21T10:00:00.000Z" },
+    );
+    const json = bundleToJson(exportAllData());
+    currentDbFile = path.join(tempDir, `ai-roundtrip-${seq}.db`);
+    initDb(currentDbFile);
+    importBundleJson(json);
+    expect(listHistory()[0]?.ai).toEqual(ai);
+  });
+
+  it("ignores unvalidatable AI payloads instead of failing the save", () => {
+    createHistoryEntry(
+      validateHistoryInput({
+        tool: "log-analyzer",
+        system: "",
+        summary: "bad ai",
+        severity: "Low",
+        payload: "{}",
+        ai: { severity: "Urgent" } as never,
+      }),
+    );
+    expect(listHistory()[0]?.ai).toBeNull();
+  });
 });
 
 describe("daily auto-backup", () => {
