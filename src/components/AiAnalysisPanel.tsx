@@ -206,8 +206,14 @@ export function AiAnalysisPanel({
           <div className="grid gap-4 lg:grid-cols-2">
             <ResultBlock title="AI Root Cause (推測)">
               <p className="px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200">
-                {result.analysis.rootCause}
+                {result.analysis.rootCauseZh}
               </p>
+              {result.analysis.rootCause && (
+                <details className="px-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  <summary className="cursor-pointer select-none font-medium">EN</summary>
+                  <p className="mt-1 whitespace-pre-wrap">{result.analysis.rootCause}</p>
+                </details>
+              )}
               {result.analysis.errorTypes.length > 0 && (
                 <ul className="flex flex-wrap gap-1 px-3 pb-2">
                   {result.analysis.errorTypes.map((t) => (
@@ -223,13 +229,19 @@ export function AiAnalysisPanel({
             </ResultBlock>
             <ResultBlock title="Next Steps (推測)">
               <ol className="space-y-1 px-3 py-2">
-                {result.analysis.nextSteps.map((step, i) => (
+                {result.analysis.nextStepsZh.map((step, i) => (
                   <li key={step} className="flex gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                     <span className="font-mono text-xs text-zinc-400">{i + 1}.</span>
                     {step}
                   </li>
                 ))}
               </ol>
+              {result.analysis.nextSteps.length > 0 && (
+                <details className="px-3 pb-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  <summary className="cursor-pointer select-none font-medium">EN</summary>
+                  <ol className="mt-1 list-decimal space-y-0.5 pl-4">{result.analysis.nextSteps.map((s) => <li key={s}>{s}</li>)}</ol>
+                </details>
+              )}
             </ResultBlock>
           </div>
 
@@ -250,7 +262,14 @@ export function AiAnalysisPanel({
           {result.analysis.explanation && (
             <details className="text-sm text-zinc-600 dark:text-zinc-300">
               <summary className="cursor-pointer select-none">AI 推導過程</summary>
-              <p className="mt-1 whitespace-pre-wrap">{result.analysis.explanation}</p>
+              <p className="mt-1 whitespace-pre-wrap">
+                {result.analysis.explanationZh || result.analysis.explanation}
+              </p>
+              {result.analysis.explanationZh && (
+                <p className="mt-2 whitespace-pre-wrap text-xs text-zinc-400 dark:text-zinc-500">
+                  <span className="font-medium">EN:</span> {result.analysis.explanation}
+                </p>
+              )}
             </details>
           )}
 

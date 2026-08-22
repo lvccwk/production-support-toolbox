@@ -73,6 +73,8 @@ describe("prompt construction", () => {
     expect(system).toContain("Output ONLY a JSON object");
     expect(system).toContain("evidenceLines");
     expect(system).toContain("never invent");
+    expect(system).toContain("Traditional Chinese");
+    expect(system).toContain("rootCauseZh");
   });
 });
 

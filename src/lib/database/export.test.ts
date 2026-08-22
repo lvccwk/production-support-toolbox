@@ -191,10 +191,13 @@ describe("CSV export", () => {
       severity: "High" as const,
       errorTypes: ["NullPointerException"],
       rootCause: "null deref at line 2",
+      rootCauseZh: "第 2 行發生空值解除引用",
       evidenceLines: [2],
       nextSteps: ["fix the null guard"],
+      nextStepsZh: ["修正空值防護"],
       confidence: 0.82,
       explanation: "stack frame points to the dereference",
+      explanationZh: "堆疊框架指向解除引用的位置",
     };
     createHistoryEntry(
       validateHistoryInput({
@@ -210,7 +213,9 @@ describe("CSV export", () => {
     const csv = historyToCsv(exportAllData().history);
     expect(csv).toContain('"ai_severity","ai_confidence","ai_error_types"');
     expect(csv).toContain('"High","0.82","[""NullPointerException""]"');
-    expect(csv).toContain('null deref at line 2');
+    expect(csv).toContain("第 2 行發生空值解除引用");
+    expect(csv).toContain('"[""修正空值防護""]"');
+    expect(csv).toContain('ai_root_cause_zh');
     expect(csv).toContain('"[2]"');
   });
 
@@ -219,10 +224,13 @@ describe("CSV export", () => {
       severity: "Medium" as const,
       errorTypes: ["Timeout"],
       rootCause: "slow dependency",
+      rootCauseZh: "依賴服務回應緩慢",
       evidenceLines: [1],
       nextSteps: ["add backoff"],
+      nextStepsZh: ["加入退避重試"],
       confidence: 0.6,
       explanation: "read timeout observed",
+      explanationZh: "觀察到讀取逾時",
     };
     createHistoryEntry(
       validateHistoryInput({

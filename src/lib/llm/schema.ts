@@ -22,7 +22,9 @@ const LIMITS = {
   errorTypes: 10,
   nextSteps: 10,
   rootCause: 2000,
+  rootCauseZh: 2000,
   explanation: 4000,
+  explanationZh: 4000,
   evidenceLines: 20,
   stepLength: 500,
 };
@@ -59,13 +61,24 @@ export function validateAiAnalysis(value: unknown): AiAnalysis | null {
 
   const errorTypes = cleanStrings(raw.errorTypes, LIMITS.errorTypes, 100);
   const nextSteps = cleanStrings(raw.nextSteps, LIMITS.nextSteps, LIMITS.stepLength);
-  if (errorTypes === null || nextSteps === null) return null;
+  const nextStepsZh = cleanStrings(raw.nextStepsZh, LIMITS.nextSteps, LIMITS.stepLength);
+  if (errorTypes === null || nextSteps === null || nextStepsZh === null) return null;
 
   const rootCause = isString(raw.rootCause) ? raw.rootCause.trim().slice(0, LIMITS.rootCause) : "";
   if (!rootCause) return null;
 
+  // Bilingual: the Chinese side is required for rootCause/nextSteps and
+  // optional for the explanation (falls back to the English text).
+  const rootCauseZh = isString(raw.rootCauseZh)
+    ? raw.rootCauseZh.trim().slice(0, LIMITS.rootCauseZh)
+    : "";
+  if (!rootCauseZh) return null;
+
   const explanation = isString(raw.explanation)
     ? raw.explanation.trim().slice(0, LIMITS.explanation)
+    : "";
+  const explanationZh = isString(raw.explanationZh)
+    ? raw.explanationZh.trim().slice(0, LIMITS.explanationZh)
     : "";
 
   if (!Array.isArray(raw.evidenceLines)) return null;
@@ -83,9 +96,12 @@ export function validateAiAnalysis(value: unknown): AiAnalysis | null {
     severity,
     errorTypes,
     rootCause,
+    rootCauseZh,
     evidenceLines,
     nextSteps,
+    nextStepsZh,
     confidence,
     explanation,
+    explanationZh,
   };
 }
