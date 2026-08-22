@@ -8,6 +8,7 @@ import {
   Input,
   SeverityBadge,
 } from "@/components/ui";
+import { TransferButtons } from "@/components/TransferButtons";
 import type { HistoryEntry } from "@/types";
 
 const TOOL_NAMES: Record<string, string> = {
@@ -101,15 +102,18 @@ export function SupportHistory() {
         title="Saved Analyses"
         description="Only entries you explicitly saved appear here. Search, re-open or delete."
         actions={
-          <Input
-            placeholder="Search history…"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              void refresh(e.target.value);
-            }}
-            className="w-72"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Search history…"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                void refresh(e.target.value);
+              }}
+              className="w-72"
+            />
+            <TransferButtons scope="history" onImported={() => void refresh(query)} />
+          </div>
         }
       >
         {error && <div className="mb-3"><ErrorNote message={error} /></div>}

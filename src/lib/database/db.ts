@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { writeDailyBackupIfMissing } from "./backup";
 
 /**
  * SQLite access layer (sections 14-15). A single local database file, no
@@ -35,6 +36,7 @@ export function getDb(): Database.Database {
   instance.pragma("journal_mode = WAL");
   instance.pragma("foreign_keys = ON");
   migrate(instance);
+  writeDailyBackupIfMissing(instance, filePath);
   db = instance;
   boundPath = filePath;
   return instance;
