@@ -139,6 +139,10 @@ export class OpenCodeProvider implements LlmProvider {
           cwd,
           env: childEnv,
           shell: false,
+          // stdin must be closed IMMEDIATELY: opencode waits on an open
+          // stdin pipe, which hangs `opencode run` forever when spawned
+          // from a server (observed: 240s timeout with a 12s CLI run).
+          stdio: ["ignore", "pipe", "pipe"],
         });
       } catch {
         reject(new ToolError(`Failed to start '${bin ?? "opencode"}'.`));
