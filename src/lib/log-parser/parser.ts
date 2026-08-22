@@ -9,7 +9,7 @@ const TIMESTAMP_RE =
   /\b(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:[.,]\d{1,6})?(Z|[+-]\d{2}:?\d{2})?\b/g;
 
 const LEVEL_RE =
-  /\b(TRACE|DEBUG|INFO|NOTICE|WARNING|WARN|ERROR|SEVERE|FATAL|CRITICAL)\b/g;
+  /\b(TRACE|DEBUG|INFO|NOTICE|WARNING|WARN|ERROR|SEVERE|FATAL|CRITICAL)\b/gi;
 
 const IDENTIFIER_RE =
   /\b(transactionId|transaction_id|requestId|request_id|traceId|trace_id|correlationId|correlation_id|sessionId|session_id|userId|user_id)\s*[=:]\s*"?"?([A-Za-z0-9_\-./:=]+)/gi;
@@ -38,8 +38,13 @@ const SOURCE_PYTHON_RE =
 const HTTP_EXPLICIT_RE =
   /\b(?:HTTP[/\s]*|HTTP\/[0-9.]+[\s:]+|status\s*[=:]\s*|statusCode\s*[=:]\s*|status_code\s*[=:]\s*|http_status\s*[=:]\s*|httpStatus\s*[=:]\s*)([1-5]\d\d)\b/gi;
 
-/** Standalone 4xx/5xx codes appearing on error-like lines. */
-const HTTP_STANDALONE_RE = /\b([4-5]\d\d)\b/g;
+/**
+ * Status-like references on error lines: `returned 503`, `response 500`,
+ * `code 403`. A bare standalone 4xx/5xx is NOT enough — real logs contain
+ * thousands of random 3-digit numbers (ids, timings) that would flood the
+ * extracted statuses with false positives.
+ */
+const HTTP_KEYWORD_RE = /\b(?:returned|response|responded|code|status|http)\s+([4-5]\d\d)\b/gi;
 const ERROR_LIKE_LINE_RE =
   /(?:http|status|statuscode|status_code|error|fail|exception|response|denied|timeout|reject)/i;
 
@@ -156,7 +161,7 @@ function extractHttpStatuses(text: string): number[] {
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
     if (!ERROR_LIKE_LINE_RE.test(line)) continue;
-    for (const m of line.matchAll(HTTP_STANDALONE_RE)) {
+    for (const m of line.matchAll(HTTP_KEYWORD_RE)) {
       const code = Number(m[1]);
       if (code >= 400 && code <= 599) out.add(code);
     }

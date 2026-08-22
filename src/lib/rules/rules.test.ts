@@ -143,6 +143,21 @@ const CASES: Array<{ id: string; pos: string; neg: string }> = [
     pos: "ERROR UnsupportedEncodingException: UTF-16 not supported",
     neg: "INFO encoding=utf-8 declared",
   },
+  {
+    id: "coordination",
+    pos: "ERROR KeeperException$SessionExpiredException: session expired",
+    neg: "INFO zookeeper session created",
+  },
+  {
+    id: "android-crash",
+    pos: "E AndroidRuntime: FATAL EXCEPTION: main",
+    neg: "INFO process started com.example.app",
+  },
+  {
+    id: "web-server",
+    pos: "ERROR mod_jk child workerEnv in error state 6",
+    neg: "INFO worker started successfully",
+  },
 ];
 
 describe("rule catalogue coverage", () => {

@@ -831,6 +831,101 @@ export const RULES: LogRule[] = [
       "Add encoding validation to ingestion pipelines.",
     ],
   },
+
+  // ------------------------------------------------------------------
+  // Real-world rules added from LogHub coverage (v1.3).
+  // ------------------------------------------------------------------
+  {
+    id: "coordination",
+    name: "Coordination Service (ZooKeeper)",
+    errorType: "Coordination Error",
+    baseSeverity: "High",
+    patterns: [
+      /\b(KeeperException|NoNodeException|NodeExistsException|ConnectionLossException|SessionExpiredException|ZooKeeperException|session expired|connection loss|no node)\b/i,
+    ],
+    affectedComponents: ["ZooKeeper"],
+    rootCauses: [
+      "ZooKeeper session expired or lost.",
+      "Node/znode missing or already exists.",
+      "Coordination service restarted or partitioned.",
+    ],
+    investigation: [
+      "Check the ZooKeeper ensemble health and session stats.",
+      "Verify the znode exists and its ACLs.",
+      "Check for leader elections or quorum loss around the failure time.",
+    ],
+    suggestedFixes: [
+      "Reconnect with session restore/retry.",
+      "Recreate the missing node or fix the create/check ordering.",
+      "Confirm quorum and ensemble stability.",
+    ],
+    longTermImprovements: [
+      "Monitor session and quorum metrics.",
+      "Implement idempotent node creation with proper retry/backoff.",
+    ],
+  },
+  {
+    id: "android-crash",
+    name: "Android Crash",
+    errorType: "Android Crash",
+    baseSeverity: "High",
+    patterns: [
+      // Android-specific signatures only — a bare "FATAL EXCEPTION" appears
+      // in non-Android logs too (e.g. supercomputer kernel messages).
+      /\bAndroidRuntime(?:Exception)?\b/i,
+      /\bANR in\b/i,
+      /\bProcess: [^\n]{0,60}, PID: \d+\b/i,
+    ],
+    affectedComponents: ["Android App"],
+    rootCauses: [
+      "Uncaught exception crashed the app process.",
+      "Main-thread work exceeded the ANR window.",
+      "Missing condition in UI/background thread interaction.",
+    ],
+    investigation: [
+      "Start from the topmost stack frame of the FATAL EXCEPTION.",
+      "Check device/OS version and whether it is reproducible.",
+      "Look at the last user action before the crash.",
+    ],
+    suggestedFixes: [
+      "Wrap the failing path in try/catch and log context.",
+      "Move blocking work off the main thread.",
+      "Fix the null/state assumption in the top stack frame.",
+    ],
+    longTermImprovements: [
+      "Add crash reporting (e.g. Play Console / Crashlytics) with the same format.",
+      "Add instrumentation tests for the reproducing flow.",
+    ],
+  },
+  {
+    id: "web-server",
+    name: "Web Server Error",
+    errorType: "Web Server Error",
+    baseSeverity: "Medium",
+    patterns: [
+      /\b(workerEnv in error state|child worker[^\n]{0,40}in error|mod_jk[^\n]{0,40}(?:error|failed)|Address already in use)\b/i,
+    ],
+    affectedComponents: ["Web Server"],
+    rootCauses: [
+      "Worker/backend node in error state inside the web server.",
+      "Port or socket already bound by another process.",
+      "Misconfigured worker pool or unhealthy backend.",
+    ],
+    investigation: [
+      "Check the web server worker status and backend health.",
+      "List what holds the port (lsof/ss).",
+      "Review virtual host and worker configuration.",
+    ],
+    suggestedFixes: [
+      "Restart or drain the failing worker node.",
+      "Free the port or change the listener binding.",
+      "Correct the worker/balancer configuration.",
+    ],
+    longTermImprovements: [
+      "Monitor worker error states and backend health checks.",
+      "Standardise listener port allocation to avoid clashes.",
+    ],
+  },
 ];
 
 export function getRuleById(id: string): LogRule | undefined {

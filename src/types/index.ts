@@ -30,6 +30,9 @@ export type ErrorType =
   | "Certificate Error"
   | "WebSocket Error"
   | "Encoding Error"
+  | "Coordination Error"
+  | "Android Crash"
+  | "Web Server Error"
   | "Unknown Error";
 
 export const SEVERITY_ORDER: Record<Severity, number> = {
