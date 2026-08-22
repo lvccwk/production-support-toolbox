@@ -82,3 +82,44 @@ export function buildAnalysisUserPrompt(input: AnalysisPromptInput): string {
     "Answer with the JSON analysis only.",
   ].join("\n");
 }
+
+/**
+ * Select the context that leaves the machine: first 10 lines + last 20
+ * lines + rule evidence lines (±3 neighbours), capped at 300 lines and
+ * 12_000 characters (middle dropped). Pure and deterministic.
+ */
+export function selectContextLines(
+  text: string,
+  evidenceLineNumbers: number[],
+  limits?: { head?: number; tail?: number; maxLines?: number; maxChars?: number },
+): string[] {
+  const head = limits?.head ?? 10;
+  const tail = limits?.tail ?? 20;
+  const maxLines = limits?.maxLines ?? 300;
+  const maxChars = limits?.maxChars ?? 12_000;
+
+  const lines = text.split(/\r?\n/);
+  const wanted = new Set<number>();
+  for (let i = 0; i < Math.min(head, lines.length); i++) wanted.add(i);
+  for (let i = Math.max(0, lines.length - tail); i < lines.length; i++) {
+    wanted.add(i);
+  }
+  for (const lineNo of evidenceLineNumbers) {
+    for (let d = -3; d <= 3; d++) {
+      const index = lineNo - 1 + d;
+      if (index >= 0 && index < lines.length) wanted.add(index);
+    }
+  }
+
+  const indexes = [...wanted].sort((a, b) => a - b).slice(0, maxLines);
+  const out: string[] = [];
+  let chars = 0;
+  for (const index of indexes) {
+    // Count the RENDERED line (with its L{n}: prefix) so the cap is exact.
+    const rendered = `L${index + 1}: ${lines[index]}`;
+    if (chars + rendered.length + 1 > maxChars && out.length > 0) break;
+    chars += rendered.length + 1;
+    out.push(rendered);
+  }
+  return out;
+}

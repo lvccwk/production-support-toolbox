@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildAnalysisSystemPrompt, buildAnalysisUserPrompt } from "./prompts";
+import {
+  buildAnalysisSystemPrompt,
+  buildAnalysisUserPrompt,
+  selectContextLines,
+} from "./prompts";
 import type { ExtractedLogInfo, LogAnalysis } from "@/types";
 
 const INFO: ExtractedLogInfo = {
@@ -69,5 +73,32 @@ describe("prompt construction", () => {
     expect(system).toContain("Output ONLY a JSON object");
     expect(system).toContain("evidenceLines");
     expect(system).toContain("never invent");
+  });
+});
+
+describe("selectContextLines", () => {
+  const lines = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join("\n");
+
+  it("keeps head, tail and evidence neighbourhoods", () => {
+    const out = selectContextLines(lines, [50, 51]);
+    const labels = out.map((l) => Number(l.match(/L(\d+)/)?.[1]));
+    expect(labels[0]).toBe(1);
+    expect(labels).toContain(10);
+    expect(labels).toContain(81); // tail start (100 - 20 + 1)
+    expect(labels).toContain(47); // 50 - 3
+    expect(labels).toContain(53); // 51 + 3
+    expect(labels).toContain(100);
+  });
+
+  it("respects the char cap", () => {
+    const small = selectContextLines(lines, [], { maxChars: 200 });
+    expect(small.join("\n").length).toBeLessThanOrEqual(250);
+    expect(small.length).toBeGreaterThan(1);
+  });
+
+  it("is deterministic", () => {
+    expect(selectContextLines(lines, [50])).toEqual(
+      selectContextLines(lines, [50]),
+    );
   });
 });

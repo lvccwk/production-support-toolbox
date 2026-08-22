@@ -97,5 +97,16 @@ function migrate(database: Database.Database): void {
       result     TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    -- Optional audit trail for outbound AI calls (default OFF, see settings).
+    CREATE TABLE IF NOT EXISTS llm_calls (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      tool       TEXT NOT NULL,
+      provider   TEXT NOT NULL,
+      bytes_sent INTEGER NOT NULL,
+      redacted   INTEGER NOT NULL DEFAULT 1,
+      ok         INTEGER NOT NULL DEFAULT 1
+    );
   `);
 }
