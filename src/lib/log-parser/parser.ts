@@ -192,6 +192,19 @@ export function firstTimestamp(info: ExtractedLogInfo): string | null {
   return info.timestamps[0] ?? null;
 }
 
+/** First timestamp of a single line (any log format), or null. */
+export function firstLineTimestamp(line: string): string | null {
+  const m = line.match(TIMESTAMP_RE);
+  return m ? m[0] : null;
+}
+
+/** Log level token of a single line (upper-cased), or null. */
+export function lineLevel(line: string): string | null {
+  // LEVEL_RE is global, so match() returns full matches (no capture groups).
+  const m = line.match(LEVEL_RE);
+  return m ? m[0].toUpperCase() : null;
+}
+
 /** Convenience: first exception if any. */
 export function firstException(info: ExtractedLogInfo): string | null {
   return info.exceptions[0] ?? null;

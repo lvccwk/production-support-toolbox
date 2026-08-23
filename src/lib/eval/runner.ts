@@ -1,12 +1,17 @@
-import { extractLogInfo } from "@/lib/log-parser/parser";
-import { analyzeLog } from "@/lib/rules/engine";
+import { RULES } from "@/lib/rules/rules";
 
 /**
  * Rule-engine evaluation core (local, zero AI cost). Runs the deterministic
- * rule engine over an entire log file and compares per-line "flagged"
- * predictions against optional anomaly labels (e.g. LogHub's VM-instance
- * labels for OpenStack). Pure and unit-tested; the CLI in scripts/eval.ts
- * is a thin wrapper.
+ * rule catalogue over every line of a log file and compares per-line
+ * "flagged" predictions against optional anomaly labels (e.g. LogHub's
+ * VM-instance labels for OpenStack, or app-level labels for Hadoop).
+ *
+ * IMPORTANT: this scanner deliberately has NO per-rule evidence cap. The UI
+ * engine caps collected evidence at MAX_EVIDENCE_LINES_PER_RULE=8 per rule
+ * (for display); a benchmark must count every matching line, so the same
+ * RULES + patterns are evaluated here without truncation.
+ *
+ * Pure and unit-tested; the CLI in scripts/eval.ts is a thin wrapper.
  */
 
 export interface EvalRecord {
@@ -38,7 +43,7 @@ export interface EvalFileResult {
   lineCount: number;
   records: EvalRecord[];
   metrics: EvalMetrics | null;
-  /** ruleId -> number of evidence lines it matched. */
+  /** ruleId -> number of lines it matched (uncapped). */
   ruleHitCounts: Record<string, number>;
   timeMs: number;
 }
@@ -95,8 +100,8 @@ export function baselineErrorLevelFlag(lines: string[]): number[] {
 }
 
 /**
- * Run the rule engine over a log file. When `isPositive` is provided the
- * line-level metrics are computed (1-based line numbers).
+ * Run the rule catalogue over a log file. When `isPositive` is provided the
+ * line-level metrics are computed (1-based line numbers). No per-rule cap.
  */
 export function evaluateLogFile(
   text: string,
@@ -104,23 +109,27 @@ export function evaluateLogFile(
 ): EvalFileResult {
   const start = Date.now();
   const lines = text.split(/\r?\n/);
-  const info = extractLogInfo(text);
-  const analysis = analyzeLog(text, info);
 
   const flaggedLines: number[] = [];
   const ruleIdsByLine = new Map<number, string[]>();
   const ruleHitCounts: Record<string, number> = {};
 
-  for (const match of analysis.matchedEvidence) {
-    ruleHitCounts[match.ruleId] = (ruleHitCounts[match.ruleId] ?? 0) + match.evidence.length;
-    for (const evidence of match.evidence) {
-      const list = ruleIdsByLine.get(evidence.line);
-      if (list) {
-        list.push(match.ruleId);
-      } else {
-        ruleIdsByLine.set(evidence.line, [match.ruleId]);
+  // Uncapped, line-scoped scan using the exact same rules/patterns as the UI.
+  for (const rule of RULES) {
+    let ruleHits = 0;
+    for (let index = 0; index < lines.length; index++) {
+      if (rule.patterns.some((pattern) => pattern.test(lines[index]))) {
+        ruleHits += 1;
+        const lineNo = index + 1;
+        const list = ruleIdsByLine.get(lineNo);
+        if (list) {
+          list.push(rule.id);
+        } else {
+          ruleIdsByLine.set(lineNo, [rule.id]);
+        }
       }
     }
+    if (ruleHits > 0) ruleHitCounts[rule.id] = ruleHits;
   }
   for (const line of ruleIdsByLine.keys()) flaggedLines.push(line);
 
@@ -131,7 +140,7 @@ export function evaluateLogFile(
     if (label) positiveLines.push(lineNo);
     return {
       line: lineNo,
-      flagged: flaggedLines.includes(lineNo),
+      flagged: ruleIdsByLine.has(lineNo),
       ruleIds: ruleIdsByLine.get(lineNo) ?? [],
       label,
     };
