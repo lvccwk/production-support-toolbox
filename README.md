@@ -152,6 +152,13 @@ responsive layout. The **exact same logic** is exposed to agents via the
   (繁體中文):** every `*Zh` field passes through a deterministic OpenCC
   conversion before being cached/displayed/saved, so Simplified Chinese
   (简体) can never reach the GUI, history or exports.
+- **The AI call streams.** The GUI consumes `POST /api/tools/analyze/stream`
+  (SSE: `phase` / `delta` / `ai_result` / `error` / `done`) — the model's
+  tokens appear in the progress panel as they are generated instead of after
+  a blank wait. The agent-facing `POST /api/tools/analyze` is unchanged
+  (single JSON). Generation is capped at 1600 tokens
+  (`FALLBACK_MAX_TOKENS`) and each prompt line is truncated to 300 chars, so
+  a large masked log cannot inflate generation time or cost.
 - `/api/tools/analyze` masks sensitive values (`password`, `token`,
   `authorization`, `api_key`, `client_secret`, …) in its response by default
   (`PST_REDACT=off` disables).
@@ -210,7 +217,7 @@ Available tools (`POST /api/tools/<id>`):
 
 | id | what it does |
 | --- | --- |
-| `analyze` | rule-engine log analysis (severity, evidence, extracted fields, quantitative summary) + incident dossier — every text section in **English + Traditional Chinese**; zero matches auto-triggers the opt-in AI fallback (`analysisSource: "ai-fallback"`) |
+| `analyze` | rule-engine log analysis (severity, evidence, extracted fields, quantitative summary) + incident dossier — every text section in **English + Traditional Chinese**; zero matches auto-triggers the opt-in AI fallback (`analysisSource: "ai-fallback"`, streamed live to the GUI via `/api/tools/analyze/stream`) |
 | `compare` | before/after log comparison + regression verdict |
 | `json` | format / validate / minify / search |
 | `sql` | format / safety check / basic analysis (text-only, never executes) |

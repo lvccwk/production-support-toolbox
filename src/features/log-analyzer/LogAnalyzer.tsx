@@ -44,6 +44,33 @@ interface ServerAnalyzeData {
   } | null;
 }
 
+/**
+ * Minimal SSE block parser for the /analyze/stream endpoint
+ * ("event:"/"data:" lines separated by a blank line).
+ */
+function parseSseBlock(block: string): { event?: string; data: string } | null {
+  const lines = block.split(/\r?\n/);
+  let event: string | undefined;
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^\s/, ""));
+  }
+  if (dataLines.length === 0) return null;
+  return { event, data: dataLines.join("\n") };
+}
+
+function parseSseJson(data: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(data);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 const SAMPLE_LOG = `2026-08-21 10:15:22 ERROR PaymentBatch transactionId=ABC123
 java.lang.NullPointerException
 \tat com.example.PaymentService.process(PaymentService.java:125)
@@ -228,13 +255,15 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
   const [aiPhase, setAiPhase] = useState<"idle" | "running" | "done">("idle");
   const [aiElapsedSec, setAiElapsedSec] = useState(0);
   const [aiError, setAiError] = useState("");
+  /** Tail of the model's in-flight output (SSE deltas) — live progress. */
+  const [aiPreview, setAiPreview] = useState("");
   /** True once the server reports PST_AI_FALLBACK is enabled. */
   const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiRunRef = useRef(0);
   const aiCancelledRef = useRef(false);
 
-  /** Ask the server to re-run rules + AI fallback (cached, masked, bilingual). */
+  /** Stream the AI fallback from the server (cached, masked, bilingual). */
   const triggerAiFallback = async () => {
     const runId = ++aiRunRef.current;
     aiAbortRef.current?.abort();
@@ -243,31 +272,78 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
     setAiElapsedSec(0);
     setAiError("");
     setAiConfigured(null);
+    setAiPreview("");
     const controller = new AbortController();
     aiAbortRef.current = controller;
     try {
-      const res = await apiFetch("/api/tools/analyze", {
+      const res = await apiFetch("/api/tools/analyze/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ logs: [text], system }),
         signal: controller.signal,
       });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        data?: ServerAnalyzeData;
-        error?: unknown;
-      };
       if (runId !== aiRunRef.current) return;
-      if (!res.ok || !json?.ok || !json.data) {
+      if (!res.ok || !res.body) {
+        const json = (await res.json().catch(() => null)) as unknown;
         setAiError(errorMessage(json, "AI 補充分析失敗。"));
+        setAiPhase("done");
         return;
       }
-      setAiConfigured(json.data.aiFallbackConfigured ?? false);
-      if (json.data.analysisSource === "ai-fallback") {
-        setAiResult(json.data);
-      } else if (json.data.aiFallbackError) {
-        setAiError(json.data.aiFallbackError);
+
+      // Consume the SSE stream: phase / delta / ai_result / error / done.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finished = false;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (runId !== aiRunRef.current) return;
+        buffer += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          if (runId !== aiRunRef.current) return;
+          const data = parseSseJson(parsed.data);
+          switch (parsed.event) {
+            case "phase": {
+              const configured = data?.aiFallbackConfigured;
+              if (typeof configured === "boolean") setAiConfigured(configured);
+              break;
+            }
+            case "delta": {
+              const t = typeof data?.text === "string" ? data.text : "";
+              if (t) setAiPreview((prev) => (prev + t).slice(-600));
+              break;
+            }
+            case "ai_result":
+              if (data?.analysisSource === "ai-fallback") {
+                setAiResult(data as unknown as ServerAnalyzeData);
+              }
+              setAiConfigured(true);
+              setAiError("");
+              break;
+            case "error": {
+              const message =
+                typeof data?.message === "string" ? data.message : "AI 補充分析失敗。";
+              setAiError(message);
+              setAiConfigured(message.toLowerCase().includes("disabled") ? false : true);
+              setAiPreview("");
+              break;
+            }
+            case "done":
+              finished = true;
+              break;
+          }
+          if (finished) break;
+        }
+        if (finished) break;
       }
+      if (runId !== aiRunRef.current) return;
+      setAiPhase("done");
     } catch (error) {
       if (runId !== aiRunRef.current) return;
       const aborted =
@@ -279,8 +355,7 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
       } else {
         setAiError("AI 補充分析失敗（網路錯誤）。");
       }
-    } finally {
-      if (runId === aiRunRef.current) setAiPhase("done");
+      setAiPhase("done");
     }
   };
 
@@ -543,6 +618,16 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                 <p className="mt-3 text-[11px] leading-relaxed text-blue-700/70 dark:text-blue-300/70">
                   敏感值已於傳送前遮罩；結果會快取，重複分析零成本。
                 </p>
+                {aiPreview && (
+                  <div className="mt-3 rounded-md border border-blue-200 bg-white/70 p-2.5 dark:border-blue-800/50 dark:bg-zinc-900/50">
+                    <p className="text-[10px] font-medium tracking-wide text-blue-600/80 dark:text-blue-300/70">
+                      MODEL 生成中（即時預覽 — 最終以結構化結果為準）
+                    </p>
+                    <pre className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                      {aiPreview}…
+                    </pre>
+                  </div>
+                )}
                 <div className="mt-2">
                   <Button
                     variant="secondary"

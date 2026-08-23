@@ -321,6 +321,7 @@ SQLite schema 包含 `incidents`、`history`、`analysis_cache`、`custom_rules`
 | §11 P3 Vitest config | ✅ | `vitest.config.ts` → `vitest.config.mts`（explicit ESM） | `npm test` 不再顯示 native-loader 警告 |
 | §11 P3 Body limits | ✅ | `guardBodySize`（Content-Length pre-parse cap，2MB 預設）；rules import ≤500 entries；import data ≤2M chars | 測試 |
 | §11 P3 Search scalability | 📝 已文件化 | history 多欄 `%LIKE%` 全表掃描：local small-data 可接受；團隊規模建議 FTS5 + pagination（已寫入本節建議，未實作） | — |
+| 後續：AI 分析提速（streaming） | ✅ | 用戶回報「AI 分析 LOAD 好耐」（實測一次 0-match 分析 71s）：(1) `FALLBACK_MAX_TOKENS` 4096→1600；(2) `buildFallbackContext` 每行 cap 300 chars；(3) 新增 `streamFallback`（AsyncGenerator，OpenRouter `stream:true`，SSE `delta`/`result`/`error` 事件，cache/繁中/schema 保證同 runFallback 一致）＋ `POST /api/tools/analyze/stream` route（GUI 專用，規則命中不會誤觸）＋ GUI `triggerAiFallback` 改為 SSE reader 並顯示即時 delta 預覽；agent-facing `/api/tools/analyze` 不變 | 348/348 tests（streamFallback 單元 + SSE route 整合：delta 順序、cache hit 零 fetch、簡體轉繁中、429 唔洩 body、rules-matched 唔 call AI）；live smoke：delta 12s 內逐段流出 |
 
 ### 仍屬風險（Remaining Risks）
 
@@ -331,10 +332,10 @@ SQLite schema 包含 `incidents`、`history`、`analysis_cache`、`custom_rules`
 
 ### 驗證（完工時）
 
-- `npm test`：**336/336**（31 個 test files；本輪 +100 tests）
+- `npm test`：**348/348**（31 個 test files）
 - `npm run typecheck`：通過
 - `npm run lint`：0 errors 0 warnings
-- `npm run build`：通過（19 routes）
+- `npm run build`：通過（20 routes）
 
 ## 15. Definition of Done
 

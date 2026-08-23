@@ -61,6 +61,34 @@ export interface FallbackAnalysis {
  */
 export const FALLBACK_PROMPT_VERSION = 2;
 
+/**
+ * Max tokens the model may generate per fallback analysis. The output is a
+ * tight bilingual JSON schema — 4096 was far more than needed and made every
+ * call noticeably slower; 1600 is comfortable for all ten fields.
+ */
+export const FALLBACK_MAX_TOKENS = 1600;
+
+/**
+ * Cap the outgoing context: first 100 + last 100 lines of the masked log,
+ * with EACH LINE truncated to `maxCharsPerLine` (default 300) so one huge
+ * line cannot inflate the prompt (tokens = time = cost). Truncation is
+ * marked so the model knows the line was cut.
+ */
+export function buildFallbackContext(
+  outgoingLog: string,
+  maxEach = 100,
+  maxCharsPerLine = 300,
+): string[] {
+  const lines = outgoingLog.split(/\r?\n/);
+  const capLine = (line: string): string =>
+    line.length <= maxCharsPerLine
+      ? line
+      : `${line.slice(0, maxCharsPerLine)} … (line truncated)`;
+  const capped = lines.map(capLine);
+  if (capped.length <= maxEach * 2) return capped;
+  return [...capped.slice(0, maxEach), "… (middle omitted) …", ...capped.slice(-maxEach)];
+}
+
 const SEVERITIES = ["Critical", "High", "Medium", "Low", "Informational"] as const;
 
 function strArray(value: unknown, maxItems: number, maxChars: number): string[] | null {
@@ -135,12 +163,6 @@ export interface FallbackContext {
 }
 
 /** Cap the outgoing context: first 100 + last 100 lines of the masked log. */
-export function buildFallbackContext(outgoingLog: string, maxEach = 100): string[] {
-  const lines = outgoingLog.split(/\r?\n/);
-  if (lines.length <= maxEach * 2) return lines;
-  return [...lines.slice(0, maxEach), "… (middle omitted) …", ...lines.slice(-maxEach)];
-}
-
 export function buildFallbackPrompt(context: FallbackContext): string {
   return [
     "A log line from a production system did NOT match any known rule pattern.",
@@ -252,7 +274,7 @@ export async function runFallback(
           { role: "user", content: buildFallbackPrompt(context) },
         ],
         temperature: 0.2,
-        max_tokens: 4096,
+        max_tokens: FALLBACK_MAX_TOKENS,
       }),
       signal: controller.signal,
     });
@@ -328,4 +350,219 @@ function pickContent(parsed: unknown): string | null {
     return parts.length > 0 ? parts.join("\n") : null;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming fallback (Engineering follow-up: "AI 分析 LOAD 好耐").
+//
+// The non-streaming runFallback waits for the FULL generation before returning
+// anything (tens of seconds on slow models). streamFallback pushes the model's
+// tokens to the caller as they arrive (SSE via the /analyze/stream route), so
+// the GUI can show live progress instead of a blank spinner. Cache semantics,
+// validation, Traditional-Chinese conversion and timeout guards are identical
+// to runFallback.
+// ---------------------------------------------------------------------------
+
+export interface StreamFallbackEvent {
+  type: "delta" | "result" | "error";
+  /** Incremental model text (type "delta"). */
+  text?: string;
+  /** Validated + Traditional-Chinese-converted analysis (type "result"). */
+  analysis?: FallbackAnalysis;
+  /** True when served from the cache (type "result"). */
+  cached?: boolean;
+  /** Client-safe error message (type "error"). */
+  error?: string;
+}
+
+const STREAM_FINISH = "[DONE]";
+
+/** Split one SSE block ("event:"/"data:" lines) into its parts. */
+function parseSseBlock(block: string): { event?: string; data: string } | null {
+  const lines = block.split(/\r?\n/);
+  let event: string | undefined;
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^\s/, ""));
+    // "id:", ":comment" and blank lines are ignored.
+  }
+  if (dataLines.length === 0) return null;
+  return { event, data: dataLines.join("\n") };
+}
+
+async function* sseEvents(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ event?: string; data: string }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1 || (sep = buffer.indexOf("\r\n\r\n")) !== -1) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const parsed = parseSseBlock(block);
+        if (parsed) yield parsed;
+      }
+    }
+    if (buffer.trim()) {
+      const parsed = parseSseBlock(buffer);
+      if (parsed) yield parsed;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** Extract choices[0].delta.content (or message.content) from a stream chunk. */
+function extractStreamDelta(chunkText: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(chunkText);
+    if (parsed === null || typeof parsed !== "object") return null;
+    const root = parsed as Record<string, unknown>;
+    const choices = root.choices;
+    if (!Array.isArray(choices) || choices.length === 0) return null;
+    const first = choices[0];
+    if (first === null || typeof first !== "object") return null;
+    const record = first as Record<string, unknown>;
+    const delta = record.delta;
+    if (delta !== null && typeof delta === "object") {
+      const content = (delta as Record<string, unknown>).content;
+      if (typeof content === "string" && content.length > 0) return content;
+    }
+    // Some providers echo `message` instead of `delta` in stream chunks.
+    const message = record.message;
+    if (message !== null && typeof message === "object") {
+      const content = (message as Record<string, unknown>).content;
+      if (typeof content === "string" && content.length > 0) return content;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function providerErrorCategory(status: number): string {
+  if (status >= 500) return "provider";
+  if (status === 401 || status === 403) return "auth";
+  if (status === 429) return "rate-limited";
+  return "request";
+}
+
+/**
+ * Streaming counterpart of runFallback. Never throws: failures come back as
+ * `{ type: "error" }` events. On success: `delta` events while the model
+ * writes, then one `result` event with the validated, Traditional-Chinese
+ * analysis (already cached). Cache hits emit `result` immediately with no
+ * deltas.
+ */
+export async function* streamFallback(
+  context: FallbackContext,
+  options: FallbackOptions,
+): AsyncGenerator<StreamFallbackEvent> {
+  if (!options.enabled) {
+    yield {
+      type: "error",
+      error: "AI fallback is disabled (PST_AI_FALLBACK=true + key required).",
+    };
+    return;
+  }
+  const { apiKey, baseUrl, model, timeoutMs, fetchImpl } = options;
+  const outgoingLog = context.lines.join("\n");
+
+  const cacheKey = fallbackCacheKey(outgoingLog, model ?? "");
+  const cached = getFallbackCache(cacheKey);
+  if (cached !== null) {
+    const validated = validateFallbackAnalysis(cached);
+    if (validated) {
+      yield {
+        type: "result",
+        analysis: forceTraditionalAnalysis(validated),
+        cached: true,
+      };
+      return;
+    }
+    // Stale/invalid entry: fall through and re-run.
+  }
+
+  const endpoint = `${(baseUrl ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/chat/completions`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs ?? 120_000);
+
+  try {
+    const response = await (fetchImpl ?? fetch)(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: buildFallbackPrompt(context) },
+        ],
+        temperature: 0.2,
+        max_tokens: FALLBACK_MAX_TOKENS,
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      // Never forward the upstream body: only status + broad category.
+      await response.body?.cancel().catch(() => undefined);
+      yield {
+        type: "error",
+        error: `OpenRouter rejected the request (HTTP ${response.status}, ${providerErrorCategory(response.status)}).`,
+      };
+      return;
+    }
+    if (!response.body) {
+      yield { type: "error", error: "OpenRouter returned no stream." };
+      return;
+    }
+
+    let rawContent = "";
+    for await (const chunk of sseEvents(response.body)) {
+      if (chunk.data.trim() === STREAM_FINISH) break;
+      const delta = extractStreamDelta(chunk.data);
+      if (!delta) continue;
+      rawContent += delta;
+      yield { type: "delta", text: delta };
+    }
+
+    if (!rawContent.trim()) {
+      yield { type: "error", error: "OpenRouter returned no usable content." };
+      return;
+    }
+
+    const json = extractJsonBlock(rawContent);
+    const validated = json ? validateFallbackAnalysis(json) : null;
+    if (!validated) {
+      yield { type: "error", error: "AI fallback returned invalid analysis (schema)." };
+      return;
+    }
+    // Hard guarantee: convert every Chinese field to Traditional before
+    // caching/returning so GUI, history and exports never see Simplified.
+    const analysis = forceTraditionalAnalysis(validated);
+    putFallbackCache(cacheKey, model ?? "", analysis);
+    yield { type: "result", analysis, cached: false };
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === "AbortError";
+    yield {
+      type: "error",
+      error: aborted
+        ? `AI fallback timed out after ${timeoutMs}ms.`
+        : `AI fallback failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }

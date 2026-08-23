@@ -6,10 +6,18 @@ import { closeDb, initDb } from "@/lib/database/db";
 import {
   buildFallbackContext,
   buildFallbackPrompt,
+  fallbackCacheKey,
+  FALLBACK_MAX_TOKENS,
+  putFallbackCache,
   resolveFallbackOptions,
   runFallback,
+  streamFallback,
   validateFallbackAnalysis,
-  type FallbackOptions,
+} from "./fallback";
+import type {
+  FallbackAnalysis,
+  FallbackOptions,
+  StreamFallbackEvent,
 } from "./fallback";
 
 const VALID = {
@@ -91,6 +99,164 @@ describe("buildFallbackContext", () => {
     const out = buildFallbackContext(lines.join("\n"));
     expect(out.length).toBeLessThanOrEqual(201);
     expect(out).toContain("… (middle omitted) …");
+  });
+
+  it("truncates individual oversized lines (no 500k-char prompt lines)", () => {
+    const longLine = "x".repeat(20_000);
+    const out = buildFallbackContext(longLine, 100, 300);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.length).toBeLessThan(320);
+    expect(out[0]).toContain("… (line truncated)");
+  });
+
+  it("keeps short lines intact", () => {
+    const out = buildFallbackContext("short line\nanother");
+    expect(out).toEqual(["short line", "another"]);
+  });
+
+  it("FALLBACK_MAX_TOKENS is bounded (streams finish faster)", () => {
+    expect(FALLBACK_MAX_TOKENS).toBeLessThanOrEqual(1600);
+    expect(FALLBACK_MAX_TOKENS).toBeGreaterThan(256);
+  });
+});
+
+/** Build an SSE Response that emits the given chunks. */
+function streamResponse(...chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+const deltaChunk = (text: string) =>
+  `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+const DONE_CHUNK = "data: [DONE]\n\n";
+
+describe("streamFallback (Engineering follow-up: slow AI analysis)", () => {
+  // Distinct log lines per test keep cache keys isolated (same rule as runFallback).
+  const context = (line: string) => ({
+    lines: [line],
+    levels: ["ERROR"],
+    components: ["PaymentBatch"],
+    exceptions: [],
+    httpStatuses: [],
+  });
+
+  it("emits delta events while the model writes, then a validated result", async () => {
+    // The final streamed text reassembles the FULL strict-JSON analysis.
+    const full = JSON.stringify(VALID);
+    const modelChunks = [
+      deltaChunk(full.slice(0, 40)),
+      deltaChunk(full.slice(40, 120)),
+      deltaChunk(full.slice(120)),
+      DONE_CHUNK,
+    ];
+    const options = optionsWith(async () => streamResponse(...modelChunks));
+    const events: StreamFallbackEvent[] = [];
+    const deltas: string[] = [];
+    let result: FallbackAnalysis | null = null;
+    for await (const event of streamFallback(context("2026-08-21 10:00:00 ERROR stream thing A"), options)) {
+      events.push(event);
+      if (event.type === "delta") deltas.push(event.text ?? "");
+      if (event.type === "result") result = event.analysis ?? null;
+    }
+    expect(deltas.length).toBe(3);
+    expect(deltas.join("")).toBe(full);
+    expect(events.some((e) => e.type === "result")).toBe(true);
+    expect(events.find((e) => e.type === "result")?.cached).toBe(false);
+    expect(result?.rootCauses).toEqual(["unknown subsystem"]);
+    expect(result?.confidence).toBe(0.6);
+  });
+
+  it("serves cache hits immediately with no deltas", async () => {
+    const model = "deepseek/deepseek-v4-flash-0731";
+    const line = "2026-08-21 10:00:00 ERROR stream thing B";
+    putFallbackCache(fallbackCacheKey(line, model), model, VALID);
+    let fetchCalled = false;
+    const events: string[] = [];
+    for await (const event of streamFallback(
+      context(line),
+      optionsWith(async () => {
+        fetchCalled = true;
+        return streamResponse();
+      }),
+    )) {
+      events.push(event.type);
+    }
+    expect(fetchCalled).toBe(false);
+    expect(events).toEqual(["result"]);
+  });
+
+  it("converts Simplified Chinese to Traditional before caching (stream path too)", async () => {
+    const simplified = {
+      ...VALID,
+      rootCausesZh: ["问题分析建议"],
+      immediateInvestigationZh: ["检查服务器日志"],
+      suggestedFixesZh: ["重启服务"],
+    };
+    const options = optionsWith(
+      async () => streamResponse(deltaChunk(JSON.stringify(simplified)), DONE_CHUNK),
+    );
+    let result: { type: string; analysis?: unknown; cached?: boolean } | null = null;
+    for await (const event of streamFallback(
+      context("2026-08-21 10:00:00 ERROR stream thing C"),
+      options,
+    )) {
+      if (event.type === "result") result = event;
+    }
+    const analysis = result?.analysis as {
+      rootCausesZh: string[];
+      immediateInvestigationZh: string[];
+      suggestedFixesZh: string[];
+    };
+    expect(analysis.rootCausesZh).toEqual(["問題分析建議"]);
+    expect(analysis.immediateInvestigationZh).toEqual(["檢查伺服器日誌"]);
+    expect(analysis.suggestedFixesZh).toEqual(["重啓服務"]);
+  });
+
+  it("reports errors as events without forwarding the upstream body", async () => {
+    const events: string[] = [];
+    let errorMessage = "";
+    for await (const event of streamFallback(
+      context("2026-08-21 10:00:00 ERROR stream thing D"),
+      optionsWith(async () => new Response('{"error":{"message":"secret upstream detail"}}', { status: 429 })),
+    )) {
+      events.push(event.type);
+      if (event.type === "error") errorMessage = event.error ?? "";
+    }
+    expect(events).toEqual(["error"]);
+    expect(errorMessage).toContain("429");
+    expect(errorMessage).not.toContain("secret upstream detail");
+  });
+
+  it("is disabled -> single error event, never throws", async () => {
+    const events: string[] = [];
+    for await (const event of streamFallback(
+      context("2026-08-21 10:00:00 ERROR stream thing E"),
+      optionsWith(async () => streamResponse(), { enabled: false }),
+    )) {
+      events.push(event.type);
+    }
+    expect(events).toEqual(["error"]);
+  });
+
+  it("rejects invalid final JSON with an error event", async () => {
+    const events: string[] = [];
+    let errorMessage = "";
+    for await (const event of streamFallback(
+      context("2026-08-21 10:00:00 ERROR stream thing F"),
+      optionsWith(async () => streamResponse(deltaChunk("I cannot answer"), DONE_CHUNK)),
+    )) {
+      events.push(event.type);
+      if (event.type === "error") errorMessage = event.error ?? "";
+    }
+    // The text streams first (delta), then validation fails -> error event.
+    expect(events).toEqual(["delta", "error"]);
+    expect(errorMessage).toMatch(/invalid|no usable/i);
   });
 });
 

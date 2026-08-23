@@ -15,6 +15,7 @@ import * as rulesRoute from "@/app/api/tools/rules/route";
 import * as rulesIdRoute from "@/app/api/tools/rules/[id]/route";
 import * as rulesImportRoute from "@/app/api/tools/rules/import/route";
 import * as analyzeRoute from "@/app/api/tools/analyze/route";
+import * as analyzeStreamRoute from "@/app/api/tools/analyze/stream/route";
 
 /**
  * API integration tests (Engineering Review §10) — every protected route is
@@ -425,6 +426,182 @@ describe("data API flows (CRUD, export/import, rules lifecycle)", () => {
       // Rules matched, so no fallback attempt was made (and it is disabled anyway).
       expect(body.data.aiFallbackError).toBeNull();
       expect(body.data.aiFallbackConfigured).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+/** Split a raw SSE payload into (event, data) blocks. */
+function splitSse(text: string): Array<{ event: string; data: string }> {
+  return text
+    .split(/\n\n/)
+    .filter((block) => block.trim().length > 0)
+    .map((block) => {
+      let event = "";
+      const data: string[] = [];
+      for (const line of block.split(/\r?\n/)) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+      }
+      return { event, data: data.join("\n") };
+    });
+}
+
+const sseDelta = (text: string) =>
+  `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+
+function sseTextResponse(...chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+const AI_VALID_JSON = JSON.stringify({
+  severity: "High",
+  errorTypes: ["MysteryCrash"],
+  rootCauses: ["unknown subsystem"],
+  rootCausesZh: ["未知子系統"],
+  immediateInvestigation: ["check service logs"],
+  immediateInvestigationZh: ["檢查伺服器日誌"],
+  suggestedFixes: ["restart"],
+  suggestedFixesZh: ["重啟"],
+  longTermImprovements: ["add tracing"],
+  longTermImprovementsZh: ["加入追蹤"],
+  confidence: 0.6,
+});
+
+describe("stream AI fallback (SSE) — Engineering follow-up", () => {
+  it("streams delta events, then a validated Traditional-Chinese result, and serves the second call from cache", async () => {
+    vi.stubEnv("PST_API_TOKEN", adminToken);
+    vi.stubEnv("PST_AI_FALLBACK", "true");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-integration-test");
+    let fetchCalls = 0;
+    let fetchRequest: Request | null = null;
+    vi.stubGlobal(
+      "fetch",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls += 1;
+        fetchRequest = new Request(input, init);
+        return sseTextResponse(
+          sseDelta(AI_VALID_JSON.slice(0, 50)),
+          sseDelta(AI_VALID_JSON.slice(50)),
+          "data: [DONE]\n\n",
+        );
+      }) as typeof fetch,
+    );
+    try {
+      const headers = bearer(adminToken);
+      const log = "2026-08-21 10:00:00 ERROR GatewayBridge weird anomaly zx-9-stream-1";
+
+      const first = await analyzeStreamRoute.POST(
+        fakeRequest("http://localhost/api/tools/analyze/stream", {
+          method: "POST",
+          headers,
+          body: { logs: [log] },
+        }),
+      );
+      expect(first.status).toBe(200);
+      expect(first.headers.get("content-type")).toContain("text/event-stream");
+      const blocks = splitSse(await first.text());
+      const events = blocks.map((b) => b.event);
+      expect(events).toEqual(["phase", "delta", "delta", "ai_result", "done"]);
+      const phase = JSON.parse(blocks[0]!.data) as { phase: string; aiFallbackConfigured: boolean };
+      expect(phase.phase).toBe("ai");
+      expect(phase.aiFallbackConfigured).toBe(true);
+      const result = JSON.parse(blocks[3]!.data) as {
+        analysisSource: string;
+        rootCausesZh: string[];
+        aiFallback: { cached: boolean; confidence: number };
+      };
+      expect(result.analysisSource).toBe("ai-fallback");
+      expect(result.rootCausesZh).toEqual(["未知子系統"]);
+      expect(result.aiFallback.cached).toBe(false);
+      expect(result.aiFallback.confidence).toBe(0.6);
+
+      // The upstream request asks for streaming with the tightened token cap.
+      const upstreamBody = JSON.parse(await fetchRequest!.text()) as {
+        stream: boolean;
+        max_tokens: number;
+      };
+      expect(upstreamBody.stream).toBe(true);
+      expect(upstreamBody.max_tokens).toBeLessThanOrEqual(1600);
+      expect(fetchCalls).toBe(1);
+
+      // Second identical call: cache hit, no upstream call, no deltas.
+      const second = await analyzeStreamRoute.POST(
+        fakeRequest("http://localhost/api/tools/analyze/stream", {
+          method: "POST",
+          headers,
+          body: { logs: [log] },
+        }),
+      );
+      const secondBlocks = splitSse(await second.text());
+      expect(secondBlocks.map((b) => b.event)).toEqual(["phase", "ai_result", "done"]);
+      const cachedResult = JSON.parse(
+        secondBlocks.find((b) => b.event === "ai_result")!.data,
+      ) as { aiFallback: { cached: boolean } };
+      expect(cachedResult.aiFallback.cached).toBe(true);
+      expect(fetchCalls).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does NOT call the AI when rules match (server-side check, no trust)", async () => {
+    vi.stubEnv("PST_API_TOKEN", adminToken);
+    vi.stubEnv("PST_AI_FALLBACK", "true");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-integration-test");
+    let fetchCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      (async () => {
+        fetchCalls += 1;
+        return sseTextResponse();
+      }) as typeof fetch,
+    );
+    try {
+      const res = await analyzeStreamRoute.POST(
+        fakeRequest("http://localhost/api/tools/analyze/stream", {
+          method: "POST",
+          headers: bearer(adminToken),
+          body: { logs: ["2026-08-21 10:00:00 ERROR PaymentBatch java.lang.NullPointerException at A.java:1"] },
+        }),
+      );
+      const blocks = splitSse(await res.text());
+      expect(blocks.map((b) => b.event)).toEqual(["phase", "error", "done"]);
+      expect(fetchCalls).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("streams a clear error event when the fallback is disabled", async () => {
+    vi.stubEnv("PST_API_TOKEN", adminToken);
+    vi.stubEnv("PST_AI_FALLBACK", "");
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    try {
+      const res = await analyzeStreamRoute.POST(
+        fakeRequest("http://localhost/api/tools/analyze/stream", {
+          method: "POST",
+          headers: bearer(adminToken),
+          body: { logs: ["2026-08-21 10:00:00 ERROR GatewayBridge weird anomaly zx-9-stream-3"] },
+        }),
+      );
+      const blocks = splitSse(await res.text());
+      expect(blocks.map((b) => b.event)).toEqual(["phase", "error", "done"]);
+      const error = JSON.parse(blocks[1]!.data) as { message: string };
+      expect(error.message).toContain("disabled");
     } finally {
       vi.unstubAllEnvs();
     }
