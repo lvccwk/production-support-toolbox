@@ -2,6 +2,7 @@
 
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { SeverityBadge } from "@/components/ui";
+import { DISABLED_FEATURES } from "@/lib/features";
 
 const LogAnalyzer = lazy(() =>
   import("@/features/log-analyzer/LogAnalyzer").then((m) => ({ default: m.LogAnalyzer })),
@@ -69,6 +70,10 @@ const TOOLS: ToolDefinition[] = [
   { id: "alerts", name: "Alerts", blurb: "Alert rules + webhooks + notification log", Component: AlertsPage },
   { id: "settings", name: "Settings", blurb: "Backup / export / import, Agent API", Component: SettingsPage },
 ];
+
+// 暫時停用：呢啲 id 唔會喺側邊欄出現（hash 直入 / 歷史 re-open 仍然運作，
+// 因為下面 activeTool 用完整 TOOLS 嚟解析 —— 純粹收埋入口，唔係移除）。
+const ENABLED_TOOLS = TOOLS.filter((t) => !DISABLED_FEATURES.includes(t.id));
 
 function toolIdFromHash(): string {
   const m = window.location.hash.match(/^#\/([a-z-]+)/);
@@ -167,7 +172,7 @@ export function AppShell() {
               className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
               aria-label="Choose tool"
             >
-              {TOOLS.map((t) => (
+              {ENABLED_TOOLS.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
                 </option>
@@ -176,7 +181,7 @@ export function AppShell() {
           </div>
 
           <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2" aria-label="Tools">
-            {TOOLS.map((tool) => {
+            {ENABLED_TOOLS.map((tool) => {
               const active = tool.id === activeId;
               return (
                 <button

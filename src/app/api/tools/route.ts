@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { DISABLED_FEATURES } from "@/lib/features";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,6 +98,6 @@ export async function GET() {
     baseUrl: "/api/tools",
     note:
       "All /api/tools endpoints are stateless, local, deterministic and free (no LLM). Data endpoints are also available: /api/incidents, /api/history (search with ?q=), /api/export, /api/import.",
-    tools: TOOLS,
+    tools: TOOLS.filter((t) => !DISABLED_FEATURES.includes(t.id)),
   });
 }
