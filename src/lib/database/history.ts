@@ -1,6 +1,5 @@
-import type { AiAnalysis, HistoryEntry, HistoryInput, Severity } from "@/types";
+import type { HistoryEntry, HistoryInput, Severity } from "@/types";
 import { ToolError } from "@/lib/errors";
-import { validateAiAnalysis } from "@/lib/llm/schema";
 import { getDb } from "./db";
 
 /**
@@ -16,20 +15,6 @@ export interface HistoryRow {
   summary: string;
   severity: Severity | null;
   payload: string;
-  ai_json: string;
-}
-
-function parseAi(json: string): AiAnalysis | null {
-  if (!json) return null;
-  try {
-    const parsed: unknown = JSON.parse(json);
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as AiAnalysis;
-    }
-  } catch {
-    /* malformed stored ai_json -> treat as absent */
-  }
-  return null;
 }
 
 function toHistoryEntry(row: HistoryRow): HistoryEntry {
@@ -41,7 +26,6 @@ function toHistoryEntry(row: HistoryRow): HistoryEntry {
     summary: row.summary,
     severity: row.severity,
     payload: row.payload,
-    ai: parseAi(row.ai_json),
   };
 }
 
@@ -80,12 +64,7 @@ export function validateHistoryInput(raw: Partial<HistoryInput>): HistoryInput {
     throw new ToolError("Payload too large.");
   }
 
-  // Optional AI analysis: validated strictly; invalid values degrade to
-  // null rather than failing the whole save (the rest of the entry is fine).
-  const ai =
-    raw.ai === undefined || raw.ai === null ? null : validateAiAnalysis(raw.ai);
-
-  return { tool, system, summary, severity, payload, ai };
+  return { tool, system, summary, severity, payload };
 }
 
 export function listHistory(query?: string): HistoryEntry[] {
@@ -121,13 +100,12 @@ export function createHistoryEntry(
   const db = getDb();
   // Imports preserve the original created_at so dedupe hashes stay stable.
   const createdAt = opts?.createdAt ?? new Date().toISOString();
-  const aiJson = input.ai ? JSON.stringify(input.ai) : "";
   const result = db
     .prepare(
-      `INSERT INTO history (created_at, tool, system, summary, severity, payload, ai_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO history (created_at, tool, system, summary, severity, payload)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(createdAt, input.tool, input.system, input.summary, input.severity, input.payload, aiJson);
+    .run(createdAt, input.tool, input.system, input.summary, input.severity, input.payload);
   return getHistoryEntry(Number(result.lastInsertRowid))!;
 }
 

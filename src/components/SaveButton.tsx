@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button, Note } from "@/components/ui";
 import { detectSensitiveData } from "@/lib/sensitive/detector";
-import type { AiAnalysis, Severity } from "@/types";
+import type { Severity } from "@/types";
 
 /**
  * "Save Analysis" button (sections 15 & 17). Saves PER EXPLICIT CLICK only —
@@ -19,7 +19,6 @@ export function SaveButton({
   sensitiveText,
   disabled = false,
   onSaved,
-  ai,
 }: {
   tool: string;
   system: string;
@@ -30,8 +29,6 @@ export function SaveButton({
   sensitiveText: string;
   disabled?: boolean;
   onSaved?: () => void;
-  /** Optional structured AI analysis to store/export alongside the entry. */
-  ai?: AiAnalysis | null;
 }) {
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -47,7 +44,7 @@ export function SaveButton({
       const res = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool, system, summary, severity, payload, ai }),
+        body: JSON.stringify({ tool, system, summary, severity, payload }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Failed to save analysis.");

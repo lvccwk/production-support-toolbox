@@ -214,25 +214,11 @@ export function incidentsToCsv(incidents: Incident[]): string {
 export function historyToCsv(entries: HistoryEntry[]): string {
   const header = [
     "id", "createdAt", "tool", "system", "summary", "severity",
-    "ai_severity", "ai_confidence", "ai_error_types", "ai_root_cause",
-    "ai_root_cause_zh", "ai_evidence_lines", "ai_next_steps",
-    "ai_next_steps_zh", "ai_explanation", "ai_explanation_zh",
     "payload",
   ];
   const rows = entries.map((e) => {
-    const ai = e.ai;
     return [
       e.id, e.createdAt, e.tool, e.system, e.summary, e.severity ?? "",
-      ai?.severity ?? "",
-      ai?.confidence ?? "",
-      ai ? JSON.stringify(ai.errorTypes) : "",
-      ai?.rootCause ?? "",
-      ai?.rootCauseZh ?? "",
-      ai ? JSON.stringify(ai.evidenceLines) : "",
-      ai ? JSON.stringify(ai.nextSteps) : "",
-      ai ? JSON.stringify(ai.nextStepsZh) : "",
-      ai?.explanation ?? "",
-      ai?.explanationZh ?? "",
       e.payload,
     ]
       .map(csvEscape)

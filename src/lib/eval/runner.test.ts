@@ -92,4 +92,12 @@ at com.example.PaymentService.process(PaymentService.java:125)
     expect(result.records).toHaveLength(1);
     expect(result.ruleHitCounts).toEqual({});
   });
+
+  it("counts EVERY matching line — no per-rule evidence cap", () => {
+    const log = Array.from({ length: 25 }, () => "ERROR task timeout waiting for reply").join("\n");
+    const result = evaluateLogFile(log);
+    // The UI engine caps evidence at 8 lines per rule; the benchmark must not.
+    expect(result.ruleHitCounts["timeout"]).toBe(25);
+    expect(result.records.filter((r) => r.flagged)).toHaveLength(25);
+  });
 });

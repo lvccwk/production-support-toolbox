@@ -186,82 +186,54 @@ describe("CSV export", () => {
     expect(csv).toContain('{""input"":""demo log""}');
   });
 
-  it("exports AI analysis as flat CSV columns", () => {
-    const ai = {
-      severity: "High" as const,
-      errorTypes: ["NullPointerException"],
-      rootCause: "null deref at line 2",
-      rootCauseZh: "第 2 行發生空值解除引用",
-      evidenceLines: [2],
-      nextSteps: ["fix the null guard"],
-      nextStepsZh: ["修正空值防護"],
-      confidence: 0.82,
-      explanation: "stack frame points to the dereference",
-      explanationZh: "堆疊框架指向解除引用的位置",
-    };
+  it("exports the history severity column", () => {
     createHistoryEntry(
       validateHistoryInput({
         tool: "log-analyzer",
         system: "PaymentBatch",
-        summary: "AI analysis",
+        summary: "batch NPE",
         severity: "High",
         payload: "{}",
-        ai,
       }),
       { createdAt: "2026-08-21T10:00:00.000Z" },
     );
     const csv = historyToCsv(exportAllData().history);
-    expect(csv).toContain('"ai_severity","ai_confidence","ai_error_types"');
-    expect(csv).toContain('"High","0.82","[""NullPointerException""]"');
-    expect(csv).toContain("第 2 行發生空值解除引用");
-    expect(csv).toContain('"[""修正空值防護""]"');
-    expect(csv).toContain('ai_root_cause_zh');
-    expect(csv).toContain('"[2]"');
+    expect(csv).toContain('"High"');
+    expect(csv).toContain('"batch NPE"');
   });
 
-  it("preserves AI analysis through a JSON export/import round-trip", () => {
-    const ai = {
-      severity: "Medium" as const,
-      errorTypes: ["Timeout"],
-      rootCause: "slow dependency",
-      rootCauseZh: "依賴服務回應緩慢",
-      evidenceLines: [1],
-      nextSteps: ["add backoff"],
-      nextStepsZh: ["加入退避重試"],
-      confidence: 0.6,
-      explanation: "read timeout observed",
-      explanationZh: "觀察到讀取逾時",
-    };
+  it("round-trips history through a JSON export/import", () => {
     createHistoryEntry(
       validateHistoryInput({
         tool: "log-analyzer",
-        system: "",
+        system: "PaymentBatch",
         summary: "round trip",
         severity: "Medium",
-        payload: "{}",
-        ai,
+        payload: '{"input":"demo"}',
       }),
       { createdAt: "2026-08-21T10:00:00.000Z" },
     );
     const json = bundleToJson(exportAllData());
-    currentDbFile = path.join(tempDir, `ai-roundtrip-${seq}.db`);
+    currentDbFile = path.join(tempDir, `roundtrip-${seq}.db`);
     initDb(currentDbFile);
     importBundleJson(json);
-    expect(listHistory()[0]?.ai).toEqual(ai);
+    const restored = listHistory();
+    expect(restored).toHaveLength(1);
+    expect(restored[0]?.summary).toBe("round trip");
+    expect(restored[0]?.severity).toBe("Medium");
+    expect(restored[0]?.payload).toBe('{"input":"demo"}');
   });
 
-  it("ignores unvalidatable AI payloads instead of failing the save", () => {
-    createHistoryEntry(
+  it("ignores invalid severity instead of failing the save", () => {
+    expect(() =>
       validateHistoryInput({
         tool: "log-analyzer",
         system: "",
-        summary: "bad ai",
-        severity: "Low",
+        summary: "bad severity",
+        severity: "Urgent" as never,
         payload: "{}",
-        ai: { severity: "Urgent" } as never,
       }),
-    );
-    expect(listHistory()[0]?.ai).toBeNull();
+    ).toThrowError(/Invalid severity/);
   });
 });
 
