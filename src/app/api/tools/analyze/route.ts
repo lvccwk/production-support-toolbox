@@ -8,16 +8,24 @@ import { parseLogsInput } from "@/lib/llm/logs";
 import { loadIncidentDossier } from "@/lib/llm/dossier";
 import { listCustomRules } from "@/lib/database/customRules";
 import { buildLogSummary } from "@/lib/analysis/summary";
+import {
+  buildFallbackContext,
+  resolveFallbackOptions,
+  runFallback,
+} from "@/lib/llm/fallback";
+import type { ErrorType } from "@/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/tools/analyze — AGENT-FACING deterministic log analysis.
+ * POST /api/tools/analyze — AGENT-FACING log analysis (Hybrid Pattern).
  *
- * The same parser + rule engine + incident dossier the GUI uses, exposed as
- * one stateless JSON call: input log(s) in, structured analysis out. No LLM
- * call, no DB writes, no human interaction.
+ * Deterministic rule engine first: severity, evidence, extracted fields,
+ * quantitative summary, incident dossier — local, free, immediate. When NO
+ * rule matches, the OPT-IN AI fallback (PST_AI_FALLBACK=true + key) fills a
+ * structured bilingual analysis of the same masked context
+ * (analysisSource: "ai-fallback"); failures degrade back to the rule result.
  *
  * Body: { "logs": ["..."], "system": "optional hint" } (single log works too)
  * Privacy: sensitive values are masked unless PST_REDACT=off.
@@ -51,6 +59,57 @@ export async function POST(request: NextRequest) {
 
     const analysis = analyzeLog(masked.text, info, customRules);
     const dossier = loadIncidentDossier(system);
+
+    // Hybrid fallback: no rule matched -> optional AI fills the analysis.
+    let analysisSource: "rules" | "ai-fallback" = "rules";
+    let aiFallback: {
+      cached: boolean;
+      durationMs?: number;
+      model?: string | null;
+      confidence: number;
+    } | null = null;
+    let aiFallbackError: string | null = null;
+
+    if (analysis.matchedRuleIds.length === 0) {
+      const options = resolveFallbackOptions(process.env);
+      if (options.enabled) {
+        const outcome = await runFallback(
+          {
+            lines: buildFallbackContext(masked.text),
+            levels: info.levels,
+            components: info.components,
+            exceptions: info.exceptions,
+            httpStatuses: info.httpStatuses,
+          },
+          options,
+        );
+        if (outcome.ok && outcome.analysis) {
+          const fb = outcome.analysis;
+          analysisSource = "ai-fallback";
+          analysis.severity = fb.severity;
+          analysis.errorTypes = fb.errorTypes as unknown as ErrorType[];
+          analysis.rootCauses = fb.rootCauses;
+          analysis.rootCausesZh = fb.rootCausesZh;
+          analysis.immediateInvestigation = fb.immediateInvestigation;
+          analysis.immediateInvestigationZh = fb.immediateInvestigationZh;
+          analysis.suggestedFixes = fb.suggestedFixes;
+          analysis.suggestedFixesZh = fb.suggestedFixesZh;
+          analysis.longTermImprovements = fb.longTermImprovements;
+          analysis.longTermImprovementsZh = fb.longTermImprovementsZh;
+          aiFallback = {
+            cached: outcome.cached ?? false,
+            durationMs: outcome.durationMs,
+            model: outcome.model,
+            confidence: fb.confidence,
+          };
+        } else {
+          aiFallbackError = outcome.error ?? "AI fallback unavailable.";
+        }
+      } else {
+        aiFallbackError =
+          "AI fallback disabled (set PST_AI_FALLBACK=true and OPENROUTER_API_KEY).";
+      }
+    }
 
     const a = analysis;
     return NextResponse.json({
@@ -90,6 +149,9 @@ export async function POST(request: NextRequest) {
             return { id, name: rule?.name ?? id };
           }),
         summary: buildLogSummary(masked.text, customRules),
+        analysisSource,
+        aiFallback,
+        aiFallbackError,
       },
     });
   } catch (error) {

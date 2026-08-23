@@ -21,6 +21,26 @@ import { analyzeLog } from "@/lib/rules/engine";
 import { scopeMatches, toLogRules } from "@/lib/rules/custom";
 import type { CustomRule, LogParseResult } from "@/types";
 
+/** Shape of the enriched server analysis (rule engine + AI fallback). */
+interface ServerAnalyzeData {
+  severity: string;
+  errorTypes: string[];
+  rootCauses: string[];
+  rootCausesZh?: string[];
+  immediateInvestigation: string[];
+  immediateInvestigationZh?: string[];
+  suggestedFixes: string[];
+  suggestedFixesZh?: string[];
+  longTermImprovements: string[];
+  longTermImprovementsZh?: string[];
+  analysisSource?: "rules" | "ai-fallback";
+  aiFallback?: {
+    cached: boolean;
+    model?: string | null;
+    confidence: number;
+  } | null;
+}
+
 const SAMPLE_LOG = `2026-08-21 10:15:22 ERROR PaymentBatch transactionId=ABC123
 java.lang.NullPointerException
 \tat com.example.PaymentService.process(PaymentService.java:125)
@@ -112,6 +132,33 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
   const [customRuleError, setCustomRuleError] = useState("");
   /** Analysis text display: 中英並排 (default, English for learning) / 中文 / English. */
   const [langMode, setLangMode] = useState<"both" | "zh" | "en">("both");
+
+  /** Opt-in AI fallback result when the rule engine matched nothing. */
+  const [aiResult, setAiResult] = useState<ServerAnalyzeData | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  const runAiFallback = async () => {
+    setAiLoading(true);
+    setAiError("");
+    try {
+      const res = await fetch("/api/tools/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logs: [text], system }),
+      });
+      const json = (await res.json()) as { ok?: boolean; data?: ServerAnalyzeData; error?: string };
+      if (!res.ok || !json?.ok || !json.data) {
+        setAiError(json?.error ?? "AI 補充分析失敗。");
+        return;
+      }
+      setAiResult(json.data);
+    } catch {
+      setAiError("AI 補充分析失敗（網路錯誤）。");
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   // Load active custom rules from the local registry so the GUI uses the
   // same company/system rules as the agent API (scope applied per analysis).
@@ -293,9 +340,23 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                     ))}
                   </ul>
                 ) : (
-                  <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">
-                    No known error pattern matched.
-                  </p>
+                  <div className="px-3 py-2">
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      No known error pattern matched.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => void runAiFallback()}
+                      disabled={aiLoading}
+                    >
+                      {aiLoading ? "AI 分析中…" : "AI 補充分析（未命中規則）"}
+                    </Button>
+                    {aiError && (
+                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">{aiError}</p>
+                    )}
+                  </div>
                 )}
               </ResultBlock>
 
@@ -508,6 +569,103 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
               </div>
             )}
           </Card>
+
+          {aiResult && aiResult.analysisSource === "ai-fallback" && (
+            <Card
+              title="AI 補充分析（規則未命中）"
+              description={
+                aiResult.aiFallback
+                  ? `AI 推測（confidence ${Math.round(aiResult.aiFallback.confidence * 100)}%${
+                      aiResult.aiFallback.cached ? "，來自快取" : "，本次外送 OpenRouter"
+                    }）— 僅供參考，不覆寫規則引擎。`
+                  : "AI 補充分析"
+              }
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <SeverityBadge severity={aiResult.severity} />
+                {aiResult.errorTypes.map((t) => (
+                  <span
+                    key={t}
+                    className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <ResultBlock title="Possible Root Cause">
+                  <ul className="space-y-2 px-3 py-2">
+                    {pairs(aiResult.rootCausesZh, aiResult.rootCauses).map(({ zh, en }) => (
+                      <li key={en} className="text-sm text-zinc-800 dark:text-zinc-200">
+                        <span>{langMode === "en" ? en : zh}</span>
+                        {langMode === "both" && (
+                          <span className="mt-0.5 block pl-1 text-xs leading-relaxed text-zinc-400 dark:text-zinc-500">
+                            {en}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </ResultBlock>
+                <ResultBlock title="Immediate Investigation">
+                  <ol className="space-y-2 px-3 py-2">
+                    {pairs(aiResult.immediateInvestigationZh, aiResult.immediateInvestigation).map(
+                      ({ zh, en }, i) => (
+                        <li key={en} className="text-sm text-zinc-800 dark:text-zinc-200">
+                          <span className="flex gap-2">
+                            <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
+                              {i + 1}.
+                            </span>
+                            {langMode === "en" ? en : zh}
+                          </span>
+                          {langMode === "both" && (
+                            <span className="mt-0.5 block pl-5 text-xs leading-relaxed text-zinc-400 dark:text-zinc-500">
+                              {en}
+                            </span>
+                          )}
+                        </li>
+                      ),
+                    )}
+                  </ol>
+                </ResultBlock>
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <ResultBlock title="Suggested Fix">
+                  <ul className="space-y-2 px-3 py-2">
+                    {pairs(aiResult.suggestedFixesZh, aiResult.suggestedFixes).map(({ zh, en }) => (
+                      <li key={en} className="text-sm text-zinc-800 dark:text-zinc-200">
+                        <span>{langMode === "en" ? en : zh}</span>
+                        {langMode === "both" && (
+                          <span className="mt-0.5 block pl-1 text-xs leading-relaxed text-zinc-400 dark:text-zinc-500">
+                            {en}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </ResultBlock>
+                <ResultBlock title="Long-term Improvement">
+                  <ul className="space-y-2 px-3 py-2">
+                    {pairs(
+                      aiResult.longTermImprovementsZh,
+                      aiResult.longTermImprovements,
+                    ).map(({ zh, en }) => (
+                      <li key={en} className="text-sm text-zinc-800 dark:text-zinc-200">
+                        <span>{langMode === "en" ? en : zh}</span>
+                        {langMode === "both" && (
+                          <span className="mt-0.5 block pl-1 text-xs leading-relaxed text-zinc-400 dark:text-zinc-500">
+                            {en}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </ResultBlock>
+              </div>
+            </Card>
+          )}
 
           <Card title="Extracted Information">
             <div className="space-y-4">

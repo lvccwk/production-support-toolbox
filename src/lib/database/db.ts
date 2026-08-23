@@ -82,6 +82,14 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_incidents_updated_at ON incidents (updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_history_created_at ON history (created_at DESC);
 
+    -- AI fallback result cache (rule-engine misses; opt-in via PST_AI_FALLBACK).
+    CREATE TABLE IF NOT EXISTS analysis_cache (
+      cache_key  TEXT PRIMARY KEY,
+      result     TEXT NOT NULL,
+      model      TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+
     -- Scoped custom rules (Phase 6): user/agent-registered detections.
     CREATE TABLE IF NOT EXISTS custom_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,4 +109,22 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_custom_rules_active ON custom_rules (active);
   `);
+
+  // Legacy databases (pre-hybrid era) created analysis_cache with a different
+  // schema (id/tool/...); IF NOT EXISTS keeps it, which breaks the fallback.
+  // Detect the old shape and rebuild the table with the minimal schema.
+  const cacheColumns = database.prepare("PRAGMA table_info(analysis_cache)").all() as Array<{
+    name: string;
+  }>;
+  if (cacheColumns.some((c) => c.name === "tool")) {
+    database.exec(
+      `DROP TABLE analysis_cache;
+       CREATE TABLE analysis_cache (
+         cache_key  TEXT PRIMARY KEY,
+         result     TEXT NOT NULL,
+         model      TEXT NOT NULL DEFAULT '',
+         created_at TEXT NOT NULL
+       );`,
+    );
+  }
 }
