@@ -23,9 +23,11 @@ export const dynamic = "force-dynamic";
  *
  * Deterministic rule engine first: severity, evidence, extracted fields,
  * quantitative summary, incident dossier — local, free, immediate. When NO
- * rule matches, the OPT-IN AI fallback (PST_AI_FALLBACK=true + key) fills a
- * structured bilingual analysis of the same masked context
- * (analysisSource: "ai-fallback"); failures degrade back to the rule result.
+ * rule matches, the OPT-IN AI fallback (PST_AI_FALLBACK=true + key) RUNS
+ * AUTOMATICALLY and fills a structured bilingual analysis of the same masked
+ * context (analysisSource: "ai-fallback"); failures degrade back to the rule
+ * result. Response also reports aiFallbackConfigured so clients can tell
+ * "not enabled" (config hint) apart from "enabled but failed" (retry).
  *
  * Body: { "logs": ["..."], "system": "optional hint" } (single log works too)
  * Privacy: sensitive values are masked unless PST_REDACT=off.
@@ -59,6 +61,7 @@ export async function POST(request: NextRequest) {
 
     const analysis = analyzeLog(masked.text, info, customRules);
     const dossier = loadIncidentDossier(system);
+    const fallbackOptions = resolveFallbackOptions(process.env);
 
     // Hybrid fallback: no rule matched -> optional AI fills the analysis.
     let analysisSource: "rules" | "ai-fallback" = "rules";
@@ -71,8 +74,7 @@ export async function POST(request: NextRequest) {
     let aiFallbackError: string | null = null;
 
     if (analysis.matchedRuleIds.length === 0) {
-      const options = resolveFallbackOptions(process.env);
-      if (options.enabled) {
+      if (fallbackOptions.enabled) {
         const outcome = await runFallback(
           {
             lines: buildFallbackContext(masked.text),
@@ -81,7 +83,7 @@ export async function POST(request: NextRequest) {
             exceptions: info.exceptions,
             httpStatuses: info.httpStatuses,
           },
-          options,
+          fallbackOptions,
         );
         if (outcome.ok && outcome.analysis) {
           const fb = outcome.analysis;
@@ -150,6 +152,7 @@ export async function POST(request: NextRequest) {
           }),
         summary: buildLogSummary(masked.text, customRules),
         analysisSource,
+        aiFallbackConfigured: fallbackOptions.enabled,
         aiFallback,
         aiFallbackError,
       },

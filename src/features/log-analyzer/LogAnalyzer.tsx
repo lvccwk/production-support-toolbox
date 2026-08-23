@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReopenRequest } from "@/components/AppShell";
 import { SaveButton } from "@/components/SaveButton";
 import {
@@ -34,6 +34,8 @@ interface ServerAnalyzeData {
   longTermImprovements: string[];
   longTermImprovementsZh?: string[];
   analysisSource?: "rules" | "ai-fallback";
+  aiFallbackConfigured?: boolean;
+  aiFallbackError?: string | null;
   aiFallback?: {
     cached: boolean;
     model?: string | null;
@@ -133,32 +135,77 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
   /** Analysis text display: 中英並排 (default, English for learning) / 中文 / English. */
   const [langMode, setLangMode] = useState<"both" | "zh" | "en">("both");
 
-  /** Opt-in AI fallback result when the rule engine matched nothing. */
+  /** AI fallback pipeline (auto-triggered when no rule matches). */
   const [aiResult, setAiResult] = useState<ServerAnalyzeData | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
+  const [aiPhase, setAiPhase] = useState<"idle" | "running" | "done">("idle");
+  const [aiElapsedSec, setAiElapsedSec] = useState(0);
   const [aiError, setAiError] = useState("");
+  /** True once the server reports PST_AI_FALLBACK is enabled. */
+  const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
+  const aiRunRef = useRef(0);
+  const aiCancelledRef = useRef(false);
 
-  const runAiFallback = async () => {
-    setAiLoading(true);
+  /** Ask the server to re-run rules + AI fallback (cached, masked, bilingual). */
+  const triggerAiFallback = async () => {
+    const runId = ++aiRunRef.current;
+    aiAbortRef.current?.abort();
+    aiCancelledRef.current = false;
+    setAiPhase("running");
+    setAiElapsedSec(0);
     setAiError("");
+    setAiConfigured(null);
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
     try {
       const res = await fetch("/api/tools/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ logs: [text], system }),
+        signal: controller.signal,
       });
-      const json = (await res.json()) as { ok?: boolean; data?: ServerAnalyzeData; error?: string };
+      const json = (await res.json()) as {
+        ok?: boolean;
+        data?: ServerAnalyzeData;
+        error?: string;
+      };
+      if (runId !== aiRunRef.current) return;
       if (!res.ok || !json?.ok || !json.data) {
         setAiError(json?.error ?? "AI 補充分析失敗。");
         return;
       }
-      setAiResult(json.data);
-    } catch {
-      setAiError("AI 補充分析失敗（網路錯誤）。");
+      setAiConfigured(json.data.aiFallbackConfigured ?? false);
+      if (json.data.analysisSource === "ai-fallback") {
+        setAiResult(json.data);
+      } else if (json.data.aiFallbackError) {
+        setAiError(json.data.aiFallbackError);
+      }
+    } catch (error) {
+      if (runId !== aiRunRef.current) return;
+      const aborted =
+        error instanceof DOMException
+          ? error.name === "AbortError"
+          : (error as { name?: string } | null)?.name === "AbortError";
+      if (aborted) {
+        if (aiCancelledRef.current) setAiError("AI 補充分析已取消。");
+      } else {
+        setAiError("AI 補充分析失敗（網路錯誤）。");
+      }
     } finally {
-      setAiLoading(false);
+      if (runId === aiRunRef.current) setAiPhase("done");
     }
   };
+
+  // Live elapsed-time ticker while the AI fallback is running.
+  useEffect(() => {
+    if (aiPhase !== "running") return;
+    const start = Date.now();
+    const timer = setInterval(() => setAiElapsedSec((Date.now() - start) / 1000), 200);
+    return () => clearInterval(timer);
+  }, [aiPhase]);
+
+  // Abort any in-flight AI call when this view unmounts.
+  useEffect(() => () => aiAbortRef.current?.abort(), []);
 
   // Load active custom rules from the local registry so the GUI uses the
   // same company/system rules as the agent API (scope applied per analysis).
@@ -187,6 +234,14 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
       return null;
     }
     setError("");
+    // Invalidate any in-flight AI fallback and reset its UI state.
+    aiRunRef.current++;
+    aiAbortRef.current?.abort();
+    aiCancelledRef.current = false;
+    setAiPhase("idle");
+    setAiError("");
+    setAiConfigured(null);
+    setAiResult(null);
     const info = extractLogInfo(value);
     // Apply only custom rules whose scope matches this analysis.
     const applicable = customRules.filter((rule) => {
@@ -203,6 +258,15 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
     return r;
   };
 
+  /** Run the local engine, then auto-trigger AI fallback when nothing matches. */
+  const runAnalysisWithAi = (value: string): LogParseResult | null => {
+    const r = runAnalysis(value);
+    if (r && r.analysis.matchedRuleIds.length === 0) {
+      void triggerAiFallback();
+    }
+    return r;
+  };
+
   // Support History -> re-open this analysis.
   useEffect(() => {
     if (reopen && typeof reopen.payload === "object" && reopen.payload !== null) {
@@ -210,7 +274,7 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
       if (typeof payload.input === "string") {
         setText(payload.input);
         setSystem(payload.system ?? "");
-        runAnalysis(payload.input);
+        runAnalysisWithAi(payload.input);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -227,7 +291,7 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
     <div className="space-y-4">
       <Card
         title="Log Input"
-        description="Paste application logs. Analysis runs locally with a built-in rule engine — no AI API, no upload."
+        description="Paste application logs. A local rule engine analyses them; when nothing matches, an optional AI fallback (off unless PST_AI_FALLBACK=true) runs automatically."
         actions={
           <div className="flex items-center gap-2">
             <select
@@ -256,8 +320,8 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
             </select>
             <Button
               variant="primary"
-              onClick={() => runAnalysis(text)}
-              disabled={!text.trim()}
+              onClick={() => runAnalysisWithAi(text)}
+              disabled={!text.trim() || aiPhase === "running"}
             >
               Analyze Log
             </Button>
@@ -329,6 +393,58 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
               </select>
             </div>
 
+            {aiPhase === "running" && (
+              <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/70 p-4 dark:border-blue-800/50 dark:bg-blue-950/40">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-blue-400 border-t-transparent"
+                    aria-hidden
+                  />
+                  <span className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+                    AI 補充分析進行中（規則未命中，自動補位）
+                  </span>
+                  <span className="ml-auto font-mono text-xs text-blue-600 dark:text-blue-400">
+                    已 {aiElapsedSec.toFixed(1)}s
+                  </span>
+                </div>
+                <ol className="mt-3 space-y-1.5 text-xs text-blue-900/90 dark:text-blue-200/90">
+                  <li className="flex items-center gap-2">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-white">
+                      ✓
+                    </span>
+                    規則引擎掃描完成 — 未命中任何規則（0 條匹配）
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="flex h-3.5 w-3.5 items-center justify-center">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                    </span>
+                    呼叫 AI（OpenRouter）分析遮蔽後 log…
+                  </li>
+                  <li className="flex items-center gap-2 opacity-60">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full border border-current text-[10px]">
+                      3
+                    </span>
+                    驗證結構化結果並顯示（雙語）
+                  </li>
+                </ol>
+                <p className="mt-3 text-[11px] leading-relaxed text-blue-700/70 dark:text-blue-300/70">
+                  敏感值已於傳送前遮罩；結果會快取，重複分析零成本。
+                </p>
+                <div className="mt-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      aiCancelledRef.current = true;
+                      aiAbortRef.current?.abort();
+                    }}
+                  >
+                    取消
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <ResultBlock title="Error Type">
                 {result.analysis.errorTypes.length > 0 ? (
@@ -344,18 +460,31 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                     <p className="text-sm text-zinc-500 dark:text-zinc-400">
                       No known error pattern matched.
                     </p>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="mt-2"
-                      onClick={() => void runAiFallback()}
-                      disabled={aiLoading}
-                    >
-                      {aiLoading ? "AI 分析中…" : "AI 補充分析（未命中規則）"}
-                    </Button>
-                    {aiError && (
-                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">{aiError}</p>
-                    )}
+                    {aiPhase === "running" ? (
+                      <p className="mt-2 animate-pulse text-xs font-medium text-blue-600 dark:text-blue-400">
+                        AI 補充分析自動執行中…請看上方進度
+                      </p>
+                    ) : aiError && aiConfigured === false ? (
+                      <p className="mt-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
+                        規則未命中。AI 補充分析未啟用 — 在 .env 設定{" "}
+                        <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono dark:bg-zinc-800">
+                          PST_AI_FALLBACK=true
+                        </code>{" "}
+                        並重啟後，規則未命中時會自動以 AI 補位分析。
+                      </p>
+                    ) : aiError ? (
+                      <div className="mt-2">
+                        <p className="text-xs text-red-600 dark:text-red-400">{aiError}</p>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="mt-2"
+                          onClick={() => void triggerAiFallback()}
+                        >
+                          重試 AI 補充分析
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </ResultBlock>

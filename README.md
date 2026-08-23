@@ -86,6 +86,13 @@ responsive layout. The **exact same logic** is exposed to agents via the
 - Nothing is uploaded and no external services are called (the npm registry
   at install time is the only network access). No telemetry, no analytics, no
   external tracking (Next.js telemetry is disabled in the npm scripts).
+- **Exception (opt-in):** when `PST_AI_FALLBACK=true` (+ `OPENROUTER_API_KEY`)
+  is set, an analysis that matches **zero rules** automatically sends the
+  **masked** log excerpt to OpenRouter once (result cached per hash — repeat
+  = zero cost). The GUI shows a live progress panel (rule scan → AI call →
+  result) whenever this runs, and marks every response with
+  `analysisSource: "ai-fallback"`. Disabled by default; never triggered when
+  rules match.
 - `/api/tools/analyze` masks sensitive values (`password`, `token`,
   `authorization`, `api_key`, `client_secret`, …) in its response by default
   (`PST_REDACT=off` disables).
@@ -140,7 +147,7 @@ Available tools (`POST /api/tools/<id>`):
 
 | id | what it does |
 | --- | --- |
-| `analyze` | rule-engine log analysis (severity, evidence, extracted fields, quantitative summary) + incident dossier — every text section in **English + Traditional Chinese** |
+| `analyze` | rule-engine log analysis (severity, evidence, extracted fields, quantitative summary) + incident dossier — every text section in **English + Traditional Chinese**; zero matches auto-triggers the opt-in AI fallback (`analysisSource: "ai-fallback"`) |
 | `compare` | before/after log comparison + regression verdict |
 | `json` | format / validate / minify / search |
 | `sql` | format / safety check / basic analysis (text-only, never executes) |
