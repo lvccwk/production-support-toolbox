@@ -43,7 +43,7 @@ function StatCard({
   );
 }
 
-/** Horizontal bar list: name + count + share-of-total percentage bar. */
+/** Horizontal bar list: name + count/total + share-of-total percentage bar. */
 function BarList({
   items,
   empty,
@@ -62,7 +62,11 @@ function BarList({
       {items.map((item) => {
         const pct = total > 0 ? (item.count / total) * 100 : 0;
         return (
-          <li key={item.name} className="flex items-center gap-2">
+          <li
+            key={item.name}
+            className="flex items-center gap-2"
+            title={`${item.name}：${item.count} 次 / 共 ${total} 次（佔 ${Math.round(pct)}%）`}
+          >
             <span className="w-40 truncate text-xs text-zinc-600 dark:text-zinc-300" title={item.name}>
               {item.name}
             </span>
@@ -72,14 +76,33 @@ function BarList({
                 style={{ width: `${Math.max(2, pct)}%` }}
               />
             </div>
-            <span className="w-20 text-right text-xs font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
-              {item.count} · {Math.round(pct)}%
+            <span className="w-28 text-right text-xs tabular-nums text-zinc-700 dark:text-zinc-200">
+              <span className="font-semibold">{item.count}</span>
+              <span className="text-zinc-400 dark:text-zinc-500"> / {total} · {Math.round(pct)}%</span>
             </span>
           </li>
         );
       })}
     </ul>
   );
+}
+
+/** Tailwind fill colour per severity (used by rows and the stacked bar). */
+function severityBarClass(severity: string): string {
+  switch (severity) {
+    case "Critical":
+      return "bg-red-600";
+    case "High":
+      return "bg-orange-500";
+    case "Medium":
+      return "bg-amber-500";
+    default:
+      return "bg-sky-500";
+  }
+}
+
+function pctOf(part: number, whole: number): number {
+  return whole > 0 ? Math.round((part / whole) * 100) : 0;
 }
 
 function TrendChart({ trend }: { trend: DashboardSummary["history"]["trend"] }) {
@@ -101,9 +124,20 @@ function TrendChart({ trend }: { trend: DashboardSummary["history"]["trend"] }) 
           </div>
         ))}
       </div>
-      <div className="mt-1.5 flex justify-between text-[10px] text-zinc-400 dark:text-zinc-500">
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
         <span>{trend[0]?.day ?? ""}</span>
-        <span>過去 {trend.length} 日（總數 / 紅色 = High+）</span>
+        <span className="flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5">
+          <span className="flex items-center gap-1">
+            <i className="inline-block h-2 w-2 rounded-sm bg-zinc-300 dark:bg-zinc-600" />
+            總 {trend.reduce((s, b) => s + b.total, 0)}
+            <span className="text-zinc-300 dark:text-zinc-600">次</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <i className="inline-block h-2 w-2 rounded-sm bg-red-500 dark:bg-red-400" />
+            High+ {trend.reduce((s, b) => s + b.highPlus, 0)}
+          </span>
+          <span>過去 {trend.length} 日</span>
+        </span>
         <span>{trend[trend.length - 1]?.day ?? ""}</span>
       </div>
     </div>
@@ -156,8 +190,16 @@ export function Dashboard() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Saved Analyses" value={history.total} sub="Support History 總數" />
-        <StatCard label="High+ 分析" value={highPlus} sub="High / Critical 佔比" />
-        <StatCard label="AI Fallback" value={history.aiFallbackCount} sub="規則 0-match 時由 AI 補位" />
+        <StatCard
+          label="High+ 分析"
+          value={highPlus}
+          sub={`${highPlus} / ${history.total} · ${pctOf(highPlus, history.total)}% 佔比`}
+        />
+        <StatCard
+          label="AI Fallback"
+          value={history.aiFallbackCount}
+          sub={`${history.aiFallbackCount} / ${history.total} · ${pctOf(history.aiFallbackCount, history.total)}% 用過 AI`}
+        />
         <StatCard label="Open Incidents" value={incidents.open} sub={`共 ${incidents.total} 單`} />
       </div>
 
@@ -172,39 +214,64 @@ export function Dashboard() {
           )}
         </Card>
 
-        <Card title="Severity 分佈" description="佔總數百分比（bar = 佔比）">
+        <Card title="Severity 分佈" description="每行：次數 / 總數 · 佔比（上面係 100% 堆疊圖）">
           {history.bySeverity.length === 0 ? (
             <p className="py-8 text-center text-sm text-zinc-400 dark:text-zinc-500">未有數據</p>
           ) : (
-            <ul className="space-y-1.5">
-              {sevRows.map((s) => {
-                const pct = sevTotal > 0 ? (s.count / sevTotal) * 100 : 0;
-                return (
-                  <li key={s.severity} className="flex items-center gap-2">
-                    <span className="w-28 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                      {s.severity}
+            <>
+              <div className="mb-3">
+                <div className="flex h-4 w-full overflow-hidden rounded">
+                  {sevRows.map((s) => (
+                    <div
+                      key={s.severity}
+                      className={`h-full ${severityBarClass(s.severity)}`}
+                      style={{ width: `${sevTotal > 0 ? (s.count / sevTotal) * 100 : 0}%` }}
+                      title={`${s.severity}：${s.count} 次（佔 ${sevTotal > 0 ? Math.round((s.count / sevTotal) * 100) : 0}%）`}
+                    />
+                  ))}
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {sevRows.map((s) => (
+                    <span
+                      key={s.severity}
+                      className="flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400"
+                    >
+                      <i className={`inline-block h-2 w-2 rounded-full ${severityBarClass(s.severity)}`} />
+                      {s.severity} {s.count} · {sevTotal > 0 ? Math.round((s.count / sevTotal) * 100) : 0}%
                     </span>
-                    <div className="h-3 flex-1 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
-                      <div
-                        className={`h-full rounded ${
-                          s.severity === "Critical"
-                            ? "bg-red-600"
-                            : s.severity === "High"
-                              ? "bg-orange-500"
-                              : s.severity === "Medium"
-                                ? "bg-amber-500"
-                                : "bg-sky-500"
-                        }`}
-                        style={{ width: `${Math.max(2, pct)}%` }}
-                      />
-                    </div>
-                    <span className="w-20 text-right text-xs font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
-                      {s.count} · {Math.round(pct)}%
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+                  ))}
+                  <span className="ml-auto text-[11px] text-zinc-400 dark:text-zinc-500">
+                    共 {sevTotal} 次
+                  </span>
+                </div>
+              </div>
+              <ul className="space-y-1.5">
+                {sevRows.map((s) => {
+                  const pct = sevTotal > 0 ? (s.count / sevTotal) * 100 : 0;
+                  return (
+                    <li
+                      key={s.severity}
+                      className="flex items-center gap-2"
+                      title={`${s.severity}：${s.count} 次 / 共 ${sevTotal} 次（佔 ${Math.round(pct)}%）`}
+                    >
+                      <span className="w-28 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                        {s.severity}
+                      </span>
+                      <div className="h-3 flex-1 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+                        <div
+                          className={`h-full rounded ${severityBarClass(s.severity)}`}
+                          style={{ width: `${Math.max(2, pct)}%` }}
+                        />
+                      </div>
+                      <span className="w-28 text-right text-xs tabular-nums text-zinc-700 dark:text-zinc-200">
+                        <span className="font-semibold">{s.count}</span>
+                        <span className="text-zinc-400 dark:text-zinc-500"> / {sevTotal} · {Math.round(pct)}%</span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           )}
         </Card>
 
