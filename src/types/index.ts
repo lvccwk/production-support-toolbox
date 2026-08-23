@@ -75,6 +75,9 @@ export interface UnknownTriage {
   httpDirection: "client" | "server" | null;
   causes: string[];
   investigation: string[];
+  /** Traditional Chinese versions (mirror causes/investigation). */
+  causesZh?: string[];
+  investigationZh?: string[];
 }
 
 /** Structured analysis produced by the rule engine. */
@@ -83,9 +86,17 @@ export interface LogAnalysis {
   errorTypes: ErrorType[];
   affectedComponents: string[];
   rootCauses: string[];
+  /** Traditional Chinese versions — mirrors rootCauses index-for-index. */
+  rootCausesZh?: string[];
   immediateInvestigation: string[];
+  /** Traditional Chinese versions — mirrors immediateInvestigation. */
+  immediateInvestigationZh?: string[];
   suggestedFixes: string[];
+  /** Traditional Chinese versions — mirrors suggestedFixes. */
+  suggestedFixesZh?: string[];
   longTermImprovements: string[];
+  /** Traditional Chinese versions — mirrors longTermImprovements. */
+  longTermImprovementsZh?: string[];
   matchedRuleIds: string[];
   /** Evidence lines per matched rule (empty when a rule has no per-line matches). */
   matchedEvidence: Array<{ ruleId: string; ruleName: string; evidence: EvidenceLine[] }>;

@@ -1,4 +1,5 @@
 import type { ExtractedLogInfo, UnknownTriage } from "@/types";
+import { TRIAGE_ZH, UNKNOWN_ZH } from "./zh";
 
 /**
  * Structured triage for log lines that matched no rule (section 4.2 of the
@@ -206,6 +207,8 @@ function hintFor(exception: string): ExceptionHint {
 export function triageUnknownError(info: ExtractedLogInfo): UnknownTriage {
   const causes: string[] = [];
   const investigation: string[] = [];
+  const causesZh: string[] = [];
+  const investigationZh: string[] = [];
 
   // 1. Exception-class hints (dedupe by label, cap 3 exceptions).
   const seenLabels = new Set<string>();
@@ -216,11 +219,15 @@ export function triageUnknownError(info: ExtractedLogInfo): UnknownTriage {
     seenLabels.add(hint.label);
     causes.push(...hint.causes);
     investigation.push(...hint.investigation);
+    const zh = TRIAGE_ZH[hint.label];
+    causesZh.push(...(zh?.causesZh ?? hint.causes));
+    investigationZh.push(...(zh?.investigationZh ?? hint.investigation));
   }
 
   // 2. Stack-trace hint.
   if (info.stackTrace) {
     investigation.push(STACK_TRACE_INVESTIGATION);
+    investigationZh.push(UNKNOWN_ZH.stack);
   }
 
   // 3. HTTP direction hint (only when there is no language/exception signal).
@@ -228,19 +235,27 @@ export function triageUnknownError(info: ExtractedLogInfo): UnknownTriage {
   if (direction === "client") {
     causes.push(CLIENT_DIRECTION.cause);
     investigation.push(CLIENT_DIRECTION.investigation);
+    causesZh.push(UNKNOWN_ZH.directionClient);
+    investigationZh.push(UNKNOWN_ZH.directionClient);
   } else if (direction === "server") {
     causes.push(SERVER_DIRECTION.cause);
     investigation.push(SERVER_DIRECTION.investigation);
+    causesZh.push(UNKNOWN_ZH.directionServer);
+    investigationZh.push(UNKNOWN_ZH.directionServer);
   }
 
   // 4. Baseline only when nothing else was derived.
   if (causes.length === 0) causes.push(BASELINE_CAUSE);
+  if (causesZh.length === 0) causesZh.push(UNKNOWN_ZH.causes);
   if (investigation.length === 0) investigation.push(BASELINE_INVESTIGATION);
+  if (investigationZh.length === 0) investigationZh.push(UNKNOWN_ZH.fixes);
 
   return {
     languageHint: languageHint(info),
     httpDirection: direction,
     causes: causes.slice(0, 5),
     investigation: investigation.slice(0, 6),
+    causesZh: causesZh.slice(0, 5),
+    investigationZh: investigationZh.slice(0, 6),
   };
 }

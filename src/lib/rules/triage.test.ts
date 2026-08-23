@@ -91,4 +91,13 @@ describe("unknown-error triage", () => {
       result.causes.some((c) => /wrong type or format/i.test(c)),
     ).toBe(true);
   });
+
+  it("returns Traditional Chinese guidance alongside English", () => {
+    const result = triageUnknownError(
+      info({ exceptions: ["ValueError"], sources: [{ file: "app.py", line: 10, symbol: null }] }),
+    );
+    expect(result.causesZh).toBeDefined();
+    expect(result.causesZh!.length).toBe(result.causes.length);
+    expect(result.investigationZh!.length).toBe(result.investigation.length);
+  });
 });

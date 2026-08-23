@@ -9,6 +9,7 @@ import type {
 import { SEVERITY_ORDER } from "@/types";
 import { extractLogInfo } from "@/lib/log-parser/parser";
 import { RULES } from "./rules";
+import { GENERIC_INVESTIGATION_ZH, RULE_ZH, UNKNOWN_ZH } from "./zh";
 import { triageUnknownError } from "./triage";
 
 /**
@@ -128,6 +129,18 @@ function genericTail(existing: string[]): string[] {
   return out;
 }
 
+/** Traditional Chinese mirror of genericTail. */
+function genericTailZh(existingEn: string[]): string[] {
+  const seen = new Set(existingEn.map(norm));
+  const out: string[] = [];
+  for (const item of GENERIC_INVESTIGATION) {
+    if (seen.has(norm(item))) continue;
+    out.push(`[通用] ${GENERIC_INVESTIGATION_ZH[item] ?? item}`);
+    if (out.length >= GENERIC_TAIL_MAX) break;
+  }
+  return out;
+}
+
 /**
  * Analyse a log. `info` may be produced by extractLogInfo(text); the function
  * never throws. `extraRules` (e.g. scoped custom rules) are evaluated AFTER
@@ -187,21 +200,29 @@ export function analyzeLog(
 
   // --- root causes -------------------------------------------------------
   const contextualCauses: string[] = [];
+  const contextualCausesZh: string[] = [];
   if (info.httpStatuses.length > 0) {
     contextualCauses.push(
       `Downstream component returned HTTP ${info.httpStatuses.join(", ")}.`,
     );
+    contextualCausesZh.push(`下游元件回傳 HTTP ${info.httpStatuses.join(", ")}。`);
   }
   const sourceSymbol = info.sources[0]?.symbol ?? null;
   if (sourceSymbol && errorTypes.includes("NullPointerException")) {
     contextualCauses.push(
       `Unexpected null value encountered in ${sourceSymbol} (see source line).`,
     );
+    contextualCausesZh.push(`在 ${sourceSymbol} 遇到非預期的 null 數值（見來源行）。`);
   }
   const rootCauses = dedupeStrings([
     ...contextualCauses,
     ...matched.flatMap((r) => r.rootCauses),
     ...(triage ? triage.causes : []),
+  ]);
+  const rootCausesZh = dedupeStrings([
+    ...contextualCausesZh,
+    ...matched.flatMap((r) => RULE_ZH[r.id]?.rootCausesZh ?? r.rootCauses),
+    ...(triage ? (triage.causesZh ?? triage.causes) : []),
   ]);
 
   // --- immediate investigation -------------------------------------------
@@ -210,23 +231,46 @@ export function analyzeLog(
     ...ruleInvestigation,
     ...(triage ? triage.investigation : genericTail(ruleInvestigation)),
   ]);
+  const immediateInvestigationZh = dedupeStrings([
+    ...matched.flatMap((r) => RULE_ZH[r.id]?.investigationZh ?? r.investigation),
+    ...(triage
+      ? (triage.investigationZh ?? triage.investigation)
+      : genericTailZh(ruleInvestigation)),
+  ]);
 
   // --- suggestions -------------------------------------------------------
   let suggestedFixes: string[];
+  let suggestedFixesZh: string[];
   if (matched.length > 0) {
     suggestedFixes = dedupeStrings(matched.flatMap((r) => r.suggestedFixes));
+    suggestedFixesZh = dedupeStrings(
+      matched.flatMap((r) => RULE_ZH[r.id]?.suggestedFixesZh ?? r.suggestedFixes),
+    );
   } else if (triage) {
     const fixes = [UNKNOWN_FIX_SEARCH];
-    if (triage.httpDirection === "client") fixes.unshift(UNKNOWN_FIX_CLIENT);
-    if (triage.httpDirection === "server") fixes.unshift(UNKNOWN_FIX_SERVER);
+    const fixesZh = [UNKNOWN_ZH.fixes];
+    if (triage.httpDirection === "client") {
+      fixes.unshift(UNKNOWN_FIX_CLIENT);
+      fixesZh.unshift(UNKNOWN_ZH.fixClient);
+    }
+    if (triage.httpDirection === "server") {
+      fixes.unshift(UNKNOWN_FIX_SERVER);
+      fixesZh.unshift(UNKNOWN_ZH.fixServer);
+    }
     suggestedFixes = dedupeStrings(fixes);
+    suggestedFixesZh = dedupeStrings(fixesZh);
   } else {
     suggestedFixes = [UNKNOWN_FIX_SEARCH];
+    suggestedFixesZh = [UNKNOWN_ZH.fixes];
   }
 
   const longTermImprovements = dedupeStrings([
     ...matched.flatMap((r) => r.longTermImprovements),
     ...(matched.length === 0 && isUnknown ? [UNKNOWN_LONG_TERM] : []),
+  ]);
+  const longTermImprovementsZh = dedupeStrings([
+    ...matched.flatMap((r) => RULE_ZH[r.id]?.longTermImprovementsZh ?? r.longTermImprovements),
+    ...(matched.length === 0 && isUnknown ? [UNKNOWN_ZH.longTerm] : []),
   ]);
 
   return {
@@ -234,9 +278,13 @@ export function analyzeLog(
     errorTypes,
     affectedComponents,
     rootCauses,
+    rootCausesZh,
     immediateInvestigation,
+    immediateInvestigationZh,
     suggestedFixes,
+    suggestedFixesZh,
     longTermImprovements,
+    longTermImprovementsZh,
     matchedRuleIds: matched.map((r) => r.id),
     matchedEvidence: matches.map(({ rule, evidence }) => ({
       ruleId: rule.id,

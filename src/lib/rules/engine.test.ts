@@ -161,6 +161,26 @@ ValueError: invalid literal for int(): 'abc'
     const log = "ERROR timeout waiting for reply";
     expect(analyzeLogText(log)).toEqual(analyzeLogText(log));
   });
+
+  it("returns Traditional Chinese texts alongside English", () => {
+    const result = analyzeLogText(`2026-08-21 10:15:22 ERROR PaymentBatch
+java.lang.NullPointerException
+at com.example.PaymentService.process(PaymentService.java:125)`);
+    expect(result.rootCausesZh).toBeDefined();
+    expect(result.rootCausesZh!.length).toBe(result.rootCauses.length);
+    expect(result.rootCausesZh!.length).toBeGreaterThan(0);
+    expect(result.immediateInvestigationZh!.length).toBe(result.immediateInvestigation.length);
+    expect(result.suggestedFixesZh!.some((s) => /null/.test(s))).toBe(true);
+    expect(result.longTermImprovementsZh!.length).toBeGreaterThan(0);
+    expect(result.rootCausesZh![0]).not.toBe(result.rootCauses[0]);
+  });
+
+  it("returns zh unknown-triage texts for unmatched errors", () => {
+    const result = analyzeLogText("2026-08-21 10:00:00 ERROR something weird happened");
+    expect(result.unknownTriage).not.toBeNull();
+    expect(result.unknownTriage!.causesZh).toBeDefined();
+    expect(result.unknownTriage!.causesZh!.length).toBeGreaterThan(0);
+  });
 });
 
 describe("engine with extra (custom) rules", () => {

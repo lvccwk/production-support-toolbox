@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReopenRequest } from "@/components/AppShell";
 import { SaveButton } from "@/components/SaveButton";
 import {
@@ -100,6 +100,9 @@ function buildReport(result: LogParseResult): string {
 }
 
 export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
+  /** Pick the requested language array (fall back to English). */
+  const L = (zh: string[] | undefined, en: string[]): string[] =>
+    lang === "zh" && zh && zh.length > 0 ? zh : en;
   const [text, setText] = useState("");
   const [system, setSystem] = useState("");
   const [result, setResult] = useState<LogParseResult | null>(null);
@@ -107,6 +110,8 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
   const [customRuleInfo, setCustomRuleInfo] = useState("");
   const [customRuleError, setCustomRuleError] = useState("");
+  /** Analysis text language: "zh" (default) or "en". */
+  const [lang, setLang] = useState<"zh" | "en">("zh");
 
   // Load active custom rules from the local registry so the GUI uses the
   // same company/system rules as the agent API (scope applied per analysis).
@@ -128,31 +133,28 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
     };
   }, []);
 
-  const runAnalysis = useCallback(
-    (value: string): LogParseResult | null => {
-      if (isLogEmpty(value)) {
-        setError("Please paste a log before analysis.");
-        setResult(null);
-        return null;
-      }
-      setError("");
-      const info = extractLogInfo(value);
-      // Apply only custom rules whose scope matches this analysis.
-      const applicable = customRules.filter((rule) => {
-        const isActive = rule.active;
-        const inScope = scopeMatches(rule.scope, {
-          system,
-          components: info.components,
-        });
-        return isActive && inScope;
+  const runAnalysis = (value: string): LogParseResult | null => {
+    if (isLogEmpty(value)) {
+      setError("Please paste a log before analysis.");
+      setResult(null);
+      return null;
+    }
+    setError("");
+    const info = extractLogInfo(value);
+    // Apply only custom rules whose scope matches this analysis.
+    const applicable = customRules.filter((rule) => {
+      const isActive = rule.active;
+      const inScope = scopeMatches(rule.scope, {
+        system,
+        components: info.components,
       });
-      const analysis = analyzeLog(value, info, toLogRules(applicable));
-      const r = { analysis, info };
-      setResult(r);
-      return r;
-    },
-    [customRules, system],
-  );
+      return isActive && inScope;
+    });
+    const analysis = analyzeLog(value, info, toLogRules(applicable));
+    const r = { analysis, info };
+    setResult(r);
+    return r;
+  };
 
   // Support History -> re-open this analysis.
   useEffect(() => {
@@ -268,6 +270,13 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                 matched {result.analysis.matchedRuleIds.length} rule
                 {result.analysis.matchedRuleIds.length === 1 ? "" : "s"}
               </span>
+              <button
+                onClick={() => setLang((l) => (l === "zh" ? "en" : "zh"))}
+                className="ml-auto rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                title="Switch analysis language"
+              >
+                {lang === "zh" ? "中文 → EN" : "EN → 中文"}
+              </button>
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -304,7 +313,7 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
             <div className="mt-4">
               <ResultBlock title="Possible Root Cause">
                 <ul className="space-y-1.5 px-3 py-2">
-                  {result.analysis.rootCauses.map((cause) => (
+                  {L(result.analysis.rootCausesZh, result.analysis.rootCauses).map((cause) => (
                     <li key={cause} className="flex gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                       <span className="text-blue-600 dark:text-blue-400">•</span>
                       {cause}
@@ -317,34 +326,41 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <ResultBlock title="Immediate Investigation">
                 <ol className="space-y-1.5 px-3 py-2">
-                  {result.analysis.immediateInvestigation.map((step, i) => (
-                    <li
-                      key={step}
-                      className="flex gap-2 text-sm text-zinc-800 dark:text-zinc-200"
-                    >
-                      <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
-                        {i + 1}.
-                      </span>
-                      {step}
-                    </li>
-                  ))}
+                  {L(result.analysis.immediateInvestigationZh, result.analysis.immediateInvestigation).map(
+                    (step, i) => (
+                      <li
+                        key={step}
+                        className="flex gap-2 text-sm text-zinc-800 dark:text-zinc-200"
+                      >
+                        <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
+                          {i + 1}.
+                        </span>
+                        {step}
+                      </li>
+                    ),
+                  )}
                 </ol>
               </ResultBlock>
 
               <div className="space-y-4">
                 <ResultBlock title="Suggested Fix">
                   <ul className="space-y-1.5 px-3 py-2">
-                    {result.analysis.suggestedFixes.map((fix) => (
-                      <li key={fix} className="flex gap-2 text-sm text-zinc-800 dark:text-zinc-200">
-                        <span className="text-emerald-600 dark:text-emerald-400">•</span>
-                        {fix}
-                      </li>
-                    ))}
+                    {L(result.analysis.suggestedFixesZh, result.analysis.suggestedFixes).map(
+                      (fix) => (
+                        <li key={fix} className="flex gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                          <span className="text-emerald-600 dark:text-emerald-400">•</span>
+                          {fix}
+                        </li>
+                      ),
+                    )}
                   </ul>
                 </ResultBlock>
                 <ResultBlock title="Long-term Improvement">
                   <ul className="space-y-1.5 px-3 py-2">
-                    {result.analysis.longTermImprovements.map((imp) => (
+                    {L(
+                      result.analysis.longTermImprovementsZh,
+                      result.analysis.longTermImprovements,
+                    ).map((imp) => (
                       <li key={imp} className="flex gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="text-violet-600 dark:text-violet-400">•</span>
                         {imp}
