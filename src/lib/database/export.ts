@@ -9,6 +9,7 @@ import type {
   UnknownTriage,
 } from "@/types";
 import { ToolError } from "@/lib/errors";
+import { csvEscape } from "@/lib/csv";
 import { getDb } from "./db";
 import { BACKUP_SCHEMA_VERSION } from "./backup";
 import { readSnapshotRows } from "./snapshot";
@@ -277,17 +278,6 @@ export function importBundleJson(json: string): ImportResult {
  * commas, Unicode, multiline fields and numeric/controlled-enum columns
  * round-trip exactly as before.
  */
-const FORMULA_TRIGGER = /^[\s\u0000-\u001f]*[=+\-@]/;
-
-function csvSafeCell(value: unknown): string {
-  const text = String(value ?? "");
-  return FORMULA_TRIGGER.test(text) ? `'${text}` : text;
-}
-
-function csvEscape(value: unknown): string {
-  return `"${csvSafeCell(value).replace(/"/g, '""')}"`;
-}
-
 export function incidentsToCsv(incidents: Incident[]): string {
   const header = [
     "id", "title", "system", "environment", "severity", "detectedAt",
