@@ -140,7 +140,7 @@ Available tools (`POST /api/tools/<id>`):
 
 | id | what it does |
 | --- | --- |
-| `analyze` | rule-engine log analysis (severity, evidence, extracted fields, quantitative summary) + incident dossier |
+| `analyze` | rule-engine log analysis (severity, evidence, extracted fields, quantitative summary) + incident dossier — every text section in **English + Traditional Chinese** |
 | `compare` | before/after log comparison + regression verdict |
 | `json` | format / validate / minify / search |
 | `sql` | format / safety check / basic analysis (text-only, never executes) |

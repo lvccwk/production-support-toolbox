@@ -14,7 +14,7 @@ const TOOLS = [
     method: "POST",
     path: "/api/tools/analyze",
     description:
-      "Deterministic log analysis: severity, error types, evidence lines and extracted fields (timestamps, levels, components, identifiers, exceptions, sources, HTTP statuses). Local rule engine only — no AI call, no cost, immediate.",
+      "Deterministic log analysis: severity, error types, evidence lines and extracted fields (timestamps, levels, components, identifiers, exceptions, sources, HTTP statuses). Every text section is returned in BOTH English and Traditional Chinese (…Zh fields). Local rule engine only — no AI call, no cost, immediate.",
     input: {
       logs: [
         "2026-08-21 10:15:22 ERROR PaymentBatch java.lang.NullPointerException at PaymentService.java:125",
