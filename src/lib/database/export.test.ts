@@ -237,6 +237,79 @@ describe("CSV export", () => {
   });
 });
 
+describe("history CSV derived columns", () => {
+  it("extracts exception/component/HTTP detail from a log-analyzer payload", () => {
+    const csv = historyToCsv([
+      {
+        id: 1,
+        createdAt: "2026-08-21T10:00:00.000Z",
+        tool: "log-analyzer",
+        system: "PaymentBatch",
+        summary: "NPE",
+        severity: "High",
+        payload: JSON.stringify({
+          input:
+            "2026-08-21 10:15:22 ERROR PaymentBatch java.lang.NullPointerException HTTP 500",
+        }),
+      },
+    ]);
+    expect(csv).toContain('"inputChars","inputPreview","detail","sensitive"');
+    expect(csv).toContain('"NullPointerException · PaymentBatch · HTTP 500"');
+    expect(csv).toContain('"sensitive","');
+  });
+
+  it("derives per-tool details (timestamp timezone, compare sizes, mode)", () => {
+    const csv = historyToCsv([
+      {
+        id: 1,
+        createdAt: "",
+        tool: "timestamp",
+        system: "",
+        summary: "t",
+        severity: null,
+        payload: JSON.stringify({ input: "1787299200", timezone: "Asia/Tokyo" }),
+      },
+      {
+        id: 2,
+        createdAt: "",
+        tool: "log-comparison",
+        system: "",
+        summary: "c",
+        severity: null,
+        payload: JSON.stringify({ before: "a".repeat(10), after: "b".repeat(20) }),
+      },
+      {
+        id: 3,
+        createdAt: "",
+        tool: "sql",
+        system: "",
+        summary: "s",
+        severity: null,
+        payload: JSON.stringify({ input: "select 1", mode: "safety" }),
+      },
+    ]);
+    expect(csv).toContain('"Asia/Tokyo"');
+    expect(csv).toContain("before:10 after:20 chars");
+    expect(csv).toContain('"safety"');
+  });
+
+  it("flags sensitive payloads in the sensitive column", () => {
+    const csv = historyToCsv([
+      {
+        id: 1,
+        createdAt: "",
+        tool: "log-analyzer",
+        system: "",
+        summary: "x",
+        severity: null,
+        payload: JSON.stringify({ input: "ERROR password=hunter2" }),
+      },
+    ]);
+    expect(csv).toContain('"yes"');
+    expect(csv).toContain('password=hunter2'); // preview keeps raw for review
+  });
+});
+
 describe("daily auto-backup", () => {
   it("skips entirely under test environment", () => {
     expect(writeDailyBackupIfMissing(getDb(), currentDbFile)).toBeNull();

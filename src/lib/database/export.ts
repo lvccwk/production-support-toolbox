@@ -2,6 +2,8 @@ import type { HistoryEntry, Incident, IncidentInput, HistoryInput } from "@/type
 import { ToolError } from "@/lib/errors";
 import { getDb } from "./db";
 import { BACKUP_SCHEMA_VERSION } from "./backup";
+import { extractLogInfo } from "@/lib/log-parser/parser";
+import { detectSensitiveData } from "@/lib/sensitive/detector";
 import {
   createIncident,
   listIncidents,
@@ -211,14 +213,97 @@ export function incidentsToCsv(incidents: Incident[]): string {
   return `\uFEFF${[header.map(csvEscape).join(","), ...rows].join("\r\n")}`;
 }
 
+/**
+ * Derived metadata for one history entry — pulls useful info out of the
+ * stored payload so CSV exports don't force you to open every JSON payload.
+ */
+export interface HistoryCsvMeta {
+  inputPreview: string;
+  inputChars: number;
+  detail: string;
+  sensitive: string; // "yes" | ""
+}
+
+function safePayload(entry: HistoryEntry): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(entry.payload);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** Extract structured info for the log-* tools using the parser. */
+function logDetail(input: string): string {
+  const info = extractLogInfo(input);
+  const parts: string[] = [];
+  const exception = info.exceptions[0];
+  if (exception) parts.push(exception);
+  const component = info.components[0];
+  if (component) parts.push(component);
+  if (info.httpStatuses.length > 0) {
+    parts.push(`HTTP ${info.httpStatuses.join(",")}`);
+  }
+  return parts.join(" · ");
+}
+
+export function historyCsvMeta(entry: HistoryEntry): HistoryCsvMeta {
+  const payload = safePayload(entry);
+  const input = (str(payload.input) || str(payload.before) || entry.payload).trim();
+
+  let detail = "";
+  switch (entry.tool) {
+    case "log-analyzer":
+      detail = logDetail(input);
+      break;
+    case "log-comparison": {
+      const before = str(payload.before).length;
+      const after = str(payload.after).length;
+      detail = `before:${before} after:${after} chars`;
+      break;
+    }
+    case "json":
+    case "sql":
+    case "encoding":
+      detail = str(payload.mode || payload.action || payload.operation);
+      break;
+    case "timestamp":
+      detail = str(payload.timezone) || "Asia/Hong_Kong";
+      break;
+    case "cron":
+      detail = str(payload.input);
+      break;
+    default:
+      detail = "";
+  }
+
+  const sensitive = detectSensitiveData(entry.payload).found ? "yes" : "";
+
+  return {
+    inputPreview: input.replace(/\s+/g, " ").slice(0, 200),
+    inputChars: input.length,
+    detail,
+    sensitive,
+  };
+}
+
 export function historyToCsv(entries: HistoryEntry[]): string {
   const header = [
     "id", "createdAt", "tool", "system", "summary", "severity",
+    "inputChars", "inputPreview", "detail", "sensitive",
     "payload",
   ];
   const rows = entries.map((e) => {
+    const meta = historyCsvMeta(e);
     return [
       e.id, e.createdAt, e.tool, e.system, e.summary, e.severity ?? "",
+      meta.inputChars, meta.inputPreview, meta.detail, meta.sensitive,
       e.payload,
     ]
       .map(csvEscape)
