@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { analyzeLogText } from "./engine";
+import { analyzeLog, analyzeLogText } from "./engine";
+import { extractLogInfo } from "@/lib/log-parser/parser";
+import type { LogRule } from "@/types";
 
 describe("rule engine — requirement section 21 log parsing cases", () => {
   it("detects NullPointerException with guidance", () => {
@@ -158,5 +160,39 @@ ValueError: invalid literal for int(): 'abc'
   it("is deterministic across calls", () => {
     const log = "ERROR timeout waiting for reply";
     expect(analyzeLogText(log)).toEqual(analyzeLogText(log));
+  });
+});
+
+describe("engine with extra (custom) rules", () => {
+  const customRule: LogRule = {
+    id: "custom:1",
+    name: "pay-step44-timeout",
+    errorType: "Custom Error",
+    baseSeverity: "High",
+    patterns: [/PaymentBatch.*STEP44.*timeout/i],
+    affectedComponents: [],
+    rootCauses: ["PAY gateway timeout at STEP44"],
+    investigation: ["Check gateway health"],
+    suggestedFixes: ["Retry batch"],
+    longTermImprovements: ["Add backup gateway"],
+  };
+
+  const LOG = "2026-08-21 10:00:00 ERROR PaymentBatch STEP44 timeout waiting for PAY";
+
+  it("matches a custom rule, adds evidence and suppresses Unknown triage", () => {
+    const info = extractLogInfo(LOG);
+    const result = analyzeLog(LOG, info, [customRule]);
+    expect(result.matchedRuleIds).toContain("custom:1");
+    expect(result.errorTypes).toContain("Custom Error");
+    expect(result.unknownTriage).toBeNull();
+    expect(result.rootCauses).toContain("PAY gateway timeout at STEP44");
+    const evidence = result.matchedEvidence.find((m) => m.ruleId === "custom:1");
+    expect(evidence?.evidence[0]?.line).toBe(1);
+  });
+
+  it("keeps behaviour identical without extra rules", () => {
+    const info = extractLogInfo(LOG);
+    const plain = analyzeLog(LOG, info);
+    expect(plain.matchedRuleIds).not.toContain("custom:1");
   });
 });
