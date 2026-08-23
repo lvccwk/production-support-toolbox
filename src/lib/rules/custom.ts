@@ -158,3 +158,15 @@ export function toLogRules(customRules: CustomRule[]): LogRule[] {
       longTermImprovements: rule.longTermImprovements,
     }));
 }
+
+/**
+ * Stable identity signature for duplicate detection (import/transfer):
+ * scope + name + patterns must all match to be considered the same rule.
+ */
+export function ruleSignature(rule: { name: string; scope: RuleScope; patterns: string[] }): string {
+  return JSON.stringify({
+    scope: [rule.scope.type, rule.scope.values].join("|"),
+    name: rule.name.toLowerCase(),
+    patterns: rule.patterns.map((p) => p.trim()),
+  });
+}

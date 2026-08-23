@@ -18,7 +18,8 @@ import {
 } from "@/components/ui";
 import { extractLogInfo, isLogEmpty } from "@/lib/log-parser/parser";
 import { analyzeLog } from "@/lib/rules/engine";
-import type { LogParseResult } from "@/types";
+import { scopeMatches, toLogRules } from "@/lib/rules/custom";
+import type { CustomRule, LogParseResult } from "@/types";
 
 const SAMPLE_LOG = `2026-08-21 10:15:22 ERROR PaymentBatch transactionId=ABC123
 java.lang.NullPointerException
@@ -103,20 +104,55 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
   const [system, setSystem] = useState("");
   const [result, setResult] = useState<LogParseResult | null>(null);
   const [error, setError] = useState("");
+  const [customRules, setCustomRules] = useState<CustomRule[]>([]);
+  const [customRuleInfo, setCustomRuleInfo] = useState("");
+  const [customRuleError, setCustomRuleError] = useState("");
 
-  const runAnalysis = useCallback((value: string): LogParseResult | null => {
-    if (isLogEmpty(value)) {
-      setError("Please paste a log before analysis.");
-      setResult(null);
-      return null;
-    }
-    setError("");
-    const info = extractLogInfo(value);
-    const analysis = analyzeLog(value, info);
-    const r = { analysis, info };
-    setResult(r);
-    return r;
+  // Load active custom rules from the local registry so the GUI uses the
+  // same company/system rules as the agent API (scope applied per analysis).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/tools/rules")
+      .then((res) => res.json())
+      .then((json: { ok?: boolean; data?: { rules?: CustomRule[] } }) => {
+        if (cancelled || !json?.ok || !json.data) return;
+        const active = json.data.rules?.filter((r) => r.active) ?? [];
+        setCustomRules(active);
+        setCustomRuleInfo(active.length > 0 ? `${active.length} 條自訂規則已載入` : "");
+      })
+      .catch(() => {
+        if (!cancelled) setCustomRuleError("自訂規則載入失敗（以內建規則分析）");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const runAnalysis = useCallback(
+    (value: string): LogParseResult | null => {
+      if (isLogEmpty(value)) {
+        setError("Please paste a log before analysis.");
+        setResult(null);
+        return null;
+      }
+      setError("");
+      const info = extractLogInfo(value);
+      // Apply only custom rules whose scope matches this analysis.
+      const applicable = customRules.filter((rule) => {
+        const isActive = rule.active;
+        const inScope = scopeMatches(rule.scope, {
+          system,
+          components: info.components,
+        });
+        return isActive && inScope;
+      });
+      const analysis = analyzeLog(value, info, toLogRules(applicable));
+      const r = { analysis, info };
+      setResult(r);
+      return r;
+    },
+    [customRules, system],
+  );
 
   // Support History -> re-open this analysis.
   useEffect(() => {
@@ -209,6 +245,14 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
             {result && <CopyButton text={buildReport(result)} label="Copy report" />}
           </Toolbar>
           {error && <ErrorNote message={error} />}
+          {!error && customRuleError && (
+            <div className="mt-2">
+              <ErrorNote message={customRuleError} />
+            </div>
+          )}
+          {!error && !customRuleError && customRuleInfo && (
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{customRuleInfo}</p>
+          )}
         </div>
       </Card>
 

@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  *
  * GET: list rules (optional ?scope=global|systems|components and ?system= /
  *      ?component= to see which rules WOULD apply; ?export=json returns the
- *      full array for backup/transfer).
+ *      full bundle for backup/transfer to another machine).
  * POST: register a rule — validated (regex compile + caps), stored locally.
  *       Body: { name, scope:{type,values}, patterns[], severity,
  *               rootCauses[], investigation[], suggestedFixes[], ... , active? }
@@ -24,6 +24,14 @@ export async function GET(request: NextRequest) {
   const scopeFilter = searchParams.get("scope");
   const system = searchParams.get("system");
   const component = searchParams.get("component");
+
+  if (searchParams.get("export") === "json") {
+    return toolOk({
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      rules: listCustomRules(false),
+    });
+  }
 
   let rules = listCustomRules(false);
   if (scopeFilter) {

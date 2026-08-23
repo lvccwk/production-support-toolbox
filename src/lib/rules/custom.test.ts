@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   maxCustomRules,
+  ruleSignature,
   scopeMatches,
   toLogRules,
   validateCustomRuleInput,
@@ -147,5 +148,27 @@ describe("maxCustomRules", () => {
     expect(
       maxCustomRules({ PST_MAX_CUSTOM_RULES: "50" } as unknown as NodeJS.ProcessEnv),
     ).toBe(50);
+  });
+});
+
+describe("ruleSignature", () => {
+  it("is stable for identical rules and distinct on scope/pattern/name", () => {
+    const base = {
+      name: "Pay-Step44",
+      scope: { type: "components" as const, values: ["PaymentBatch"] },
+      patterns: ["STEP44.*timeout"],
+    };
+    const same = {
+      name: "pay-step44",
+      scope: { type: "components" as const, values: ["PaymentBatch"] },
+      patterns: ["STEP44.*timeout"],
+    };
+    expect(ruleSignature(base)).toBe(ruleSignature(same));
+    expect(ruleSignature(base)).not.toBe(
+      ruleSignature({ ...base, patterns: ["STEP44 timeout"] }),
+    );
+    expect(ruleSignature(base)).not.toBe(
+      ruleSignature({ ...base, scope: { type: "global", values: [] } }),
+    );
   });
 });
