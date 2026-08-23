@@ -43,7 +43,7 @@ function StatCard({
   );
 }
 
-/** Horizontal bar list: name + count + proportional bar. */
+/** Horizontal bar list: name + count + share-of-total percentage bar. */
 function BarList({
   items,
   empty,
@@ -53,28 +53,31 @@ function BarList({
   empty: string;
   barClass?: string;
 }) {
-  const max = Math.max(1, ...items.map((i) => i.count));
+  const total = items.reduce((sum, i) => sum + i.count, 0);
   if (items.length === 0) {
     return <p className="py-4 text-center text-sm text-zinc-400 dark:text-zinc-500">{empty}</p>;
   }
   return (
     <ul className="space-y-1.5">
-      {items.map((item) => (
-        <li key={item.name} className="flex items-center gap-2">
-          <span className="w-40 truncate text-xs text-zinc-600 dark:text-zinc-300" title={item.name}>
-            {item.name}
-          </span>
-          <div className="h-3 flex-1 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
-            <div
-              className={`h-full rounded ${barClass}`}
-              style={{ width: `${Math.max(3, (item.count / max) * 100)}%` }}
-            />
-          </div>
-          <span className="w-8 text-right text-xs font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
-            {item.count}
-          </span>
-        </li>
-      ))}
+      {items.map((item) => {
+        const pct = total > 0 ? (item.count / total) * 100 : 0;
+        return (
+          <li key={item.name} className="flex items-center gap-2">
+            <span className="w-40 truncate text-xs text-zinc-600 dark:text-zinc-300" title={item.name}>
+              {item.name}
+            </span>
+            <div className="h-3 flex-1 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+              <div
+                className={`h-full rounded ${barClass}`}
+                style={{ width: `${Math.max(2, pct)}%` }}
+              />
+            </div>
+            <span className="w-20 text-right text-xs font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
+              {item.count} · {Math.round(pct)}%
+            </span>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -142,6 +145,10 @@ export function Dashboard() {
   const highPlus = history.bySeverity
     .filter((s) => s.severity === "High" || s.severity === "Critical")
     .reduce((sum, s) => sum + s.count, 0);
+  // Bars are share-of-total percentages: biggest count first, so equal counts
+  // render as equal slivers instead of a row of full-width bars.
+  const sevTotal = history.bySeverity.reduce((sum, s) => sum + s.count, 0);
+  const sevRows = [...history.bySeverity].sort((a, b) => b.count - a.count);
 
   return (
     <div className="space-y-4">
@@ -165,37 +172,38 @@ export function Dashboard() {
           )}
         </Card>
 
-        <Card title="Severity 分佈" description="按儲存分析嘅嚴重度">
+        <Card title="Severity 分佈" description="佔總數百分比（bar = 佔比）">
           {history.bySeverity.length === 0 ? (
             <p className="py-8 text-center text-sm text-zinc-400 dark:text-zinc-500">未有數據</p>
           ) : (
             <ul className="space-y-1.5">
-              {history.bySeverity.map((s) => (
-                <li key={s.severity} className="flex items-center gap-2">
-                  <span className="w-28 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    {s.severity}
-                  </span>
-                  <div className="h-3 flex-1 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
-                    <div
-                      className={`h-full rounded ${
-                        s.severity === "Critical"
-                          ? "bg-red-600"
-                          : s.severity === "High"
-                            ? "bg-orange-500"
-                            : s.severity === "Medium"
-                              ? "bg-amber-500"
-                              : "bg-sky-500"
-                      }`}
-                      style={{
-                        width: `${Math.max(3, (s.count / Math.max(1, history.bySeverity[0].count)) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                  <span className="w-8 text-right text-xs font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
-                    {s.count}
-                  </span>
-                </li>
-              ))}
+              {sevRows.map((s) => {
+                const pct = sevTotal > 0 ? (s.count / sevTotal) * 100 : 0;
+                return (
+                  <li key={s.severity} className="flex items-center gap-2">
+                    <span className="w-28 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      {s.severity}
+                    </span>
+                    <div className="h-3 flex-1 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+                      <div
+                        className={`h-full rounded ${
+                          s.severity === "Critical"
+                            ? "bg-red-600"
+                            : s.severity === "High"
+                              ? "bg-orange-500"
+                              : s.severity === "Medium"
+                                ? "bg-amber-500"
+                                : "bg-sky-500"
+                        }`}
+                        style={{ width: `${Math.max(2, pct)}%` }}
+                      />
+                    </div>
+                    <span className="w-20 text-right text-xs font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
+                      {s.count} · {Math.round(pct)}%
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Card>
