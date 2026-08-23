@@ -165,7 +165,6 @@ export function Dashboard() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -206,25 +205,6 @@ export function Dashboard() {
     download(buildDashboardReportCsv(summary), `dashboard-report-${stamp()}.csv`);
   };
 
-  // Server-side: the same raw history CSV the Settings page offers.
-  const exportRaw = async () => {
-    setExporting(true);
-    try {
-      const res = await apiFetch("/api/export?format=csv&kind=history");
-      if (!res.ok) {
-        const json = await readJson<unknown>(res);
-        setError(json.error ?? "Failed to export history CSV.");
-        return;
-      }
-      const text = await res.text();
-      download(text, `history-raw-${stamp()}.csv`);
-    } catch {
-      setError("Failed to export history CSV.");
-    } finally {
-      setExporting(false);
-    }
-  };
-
   if (loading || !summary) {
     return <p className="py-16 text-center text-sm text-zinc-400 dark:text-zinc-500">Loading…</p>;
   }
@@ -244,14 +224,11 @@ export function Dashboard() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-zinc-400 dark:text-zinc-500">
-          即時聚合（每次載入都重算）—— 要完整明細（input、evidence、payload）就匯出原始記錄。
+          即時聚合（每次載入都重算）—— 想帶走做分析就撳「匯出報表 CSV」。
         </p>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={exportReport}>
             匯出報表 CSV
-          </Button>
-          <Button variant="secondary" size="sm" disabled={exporting} onClick={() => void exportRaw()}>
-            {exporting ? "匯出中…" : "匯出原始記錄 CSV"}
           </Button>
         </div>
       </div>
