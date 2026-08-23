@@ -91,6 +91,21 @@ const TOOLS = [
     input: { expression: "0 8 * * *" },
     output: "human, nextRuns (ISO strings), nextRunsUnix",
   },
+  {
+    id: "rules",
+    method: "POST + GET + PUT/DELETE",
+    path: "/api/tools/rules",
+    description:
+      "Scoped custom rule registry: teach the engine your system/company's failure signatures. Each rule has a scope (global | systems | components) so different systems keep separate namespaces. POST to register (regex-validated), GET to list (?scope=, ?system=, ?component=, export=json), PUT/DELETE /api/tools/rules/[id] to update/remove. Custom rules are merged into /api/tools/analyze automatically.",
+    input: {
+      name: "PaymentBatch-STEP44-timeout",
+      scope: { type: "components", values: ["PaymentBatch"] },
+      patterns: ["STEP44.*timeout"],
+      severity: "High",
+      rootCauses: ["PAY gateway timeout at STEP44"],
+    },
+    output: "{ rule } | { rules } | { deleted: true }",
+  },
 ];
 
 export async function GET() {

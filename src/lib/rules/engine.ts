@@ -99,10 +99,11 @@ function dedupeTypes(items: ErrorType[]): ErrorType[] {
 /** Match rules against the log lines, collecting per-rule evidence. */
 function matchRules(
   text: string,
+  rules: LogRule[],
 ): Array<{ rule: LogRule; evidence: EvidenceLine[] }> {
   const lines = text.split(/\r?\n/);
   const out: Array<{ rule: LogRule; evidence: EvidenceLine[] }> = [];
-  for (const rule of RULES) {
+  for (const rule of rules) {
     const evidence: EvidenceLine[] = [];
     for (let i = 0; i < lines.length && evidence.length < MAX_EVIDENCE_LINES_PER_RULE; i++) {
       const line = lines[i];
@@ -129,10 +130,15 @@ function genericTail(existing: string[]): string[] {
 
 /**
  * Analyse a log. `info` may be produced by extractLogInfo(text); the function
- * never throws.
+ * never throws. `extraRules` (e.g. scoped custom rules) are evaluated AFTER
+ * the built-in catalogue; any matched rule prevents the Unknown-Error triage.
  */
-export function analyzeLog(text: string, info: ExtractedLogInfo): LogAnalysis {
-  const matches = matchRules(text);
+export function analyzeLog(
+  text: string,
+  info: ExtractedLogInfo,
+  extraRules: LogRule[] = [],
+): LogAnalysis {
+  const matches = matchRules(text, [...RULES, ...extraRules]);
   const matched = matches.map((m) => m.rule);
 
   // --- error types -------------------------------------------------------

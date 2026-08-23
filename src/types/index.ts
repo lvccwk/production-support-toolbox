@@ -30,6 +30,7 @@ export type ErrorType =
   | "Certificate Error"
   | "WebSocket Error"
   | "Encoding Error"
+  | "Custom Error"
   | "Unknown Error";
 
 export const SEVERITY_ORDER: Record<Severity, number> = {
@@ -258,4 +259,43 @@ export interface HistoryInput {
   summary: string;
   severity: Severity | null;
   payload: string;
+}
+
+/** Scope of a custom rule — which systems/components it applies to. */
+export type RuleScopeType = "global" | "systems" | "components";
+
+export interface RuleScope {
+  type: RuleScopeType;
+  /** System names (systems scope) or component names (components scope). */
+  values: string[];
+}
+
+/** A user/agent-registered detection rule (stored in SQLite). */
+export interface CustomRule {
+  id: number;
+  name: string;
+  scope: RuleScope;
+  patterns: string[];
+  severity: Severity;
+  affectedComponents: string[];
+  rootCauses: string[];
+  investigation: string[];
+  suggestedFixes: string[];
+  longTermImprovements: string[];
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomRuleInput {
+  name: string;
+  scope: RuleScope;
+  patterns: string[];
+  severity: Severity;
+  affectedComponents?: string[];
+  rootCauses?: string[];
+  investigation?: string[];
+  suggestedFixes?: string[];
+  longTermImprovements?: string[];
+  active?: boolean;
 }

@@ -81,5 +81,24 @@ function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_incidents_updated_at ON incidents (updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_history_created_at ON history (created_at DESC);
+
+    -- Scoped custom rules (Phase 6): user/agent-registered detections.
+    CREATE TABLE IF NOT EXISTS custom_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      scope_type TEXT NOT NULL DEFAULT 'global',
+      scope_values TEXT NOT NULL DEFAULT '[]',
+      patterns TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'Medium',
+      affected_components TEXT NOT NULL DEFAULT '[]',
+      root_causes TEXT NOT NULL DEFAULT '[]',
+      investigation TEXT NOT NULL DEFAULT '[]',
+      suggested_fixes TEXT NOT NULL DEFAULT '[]',
+      long_term_improvements TEXT NOT NULL DEFAULT '[]',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_custom_rules_active ON custom_rules (active);
   `);
 }

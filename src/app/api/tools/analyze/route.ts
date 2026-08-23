@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { ToolError } from "@/lib/errors";
 import { extractLogInfo } from "@/lib/log-parser/parser";
 import { analyzeLog } from "@/lib/rules/engine";
+import { scopeMatches, toLogRules } from "@/lib/rules/custom";
 import { redactSensitiveValues } from "@/lib/llm/redact";
 import { parseLogsInput } from "@/lib/llm/logs";
 import { loadIncidentDossier } from "@/lib/llm/dossier";
+import { listCustomRules } from "@/lib/database/customRules";
 import { buildLogSummary } from "@/lib/analysis/summary";
 
 export const runtime = "nodejs";
@@ -36,7 +38,18 @@ export async function POST(request: NextRequest) {
       : { text: logs.join("\n"), maskedKeys: [] as string[] };
 
     const info = extractLogInfo(masked.text);
-    const analysis = analyzeLog(masked.text, info);
+
+    // Scoped custom rules: only rules whose scope matches this analysis run.
+    const customRules = toLogRules(
+      listCustomRules(true).filter((rule) =>
+        scopeMatches(rule.scope, {
+          system: system ?? undefined,
+          components: info.components,
+        }),
+      ),
+    );
+
+    const analysis = analyzeLog(masked.text, info, customRules);
     const dossier = loadIncidentDossier(system);
 
     const a = analysis;
@@ -66,7 +79,13 @@ export async function POST(request: NextRequest) {
         maskedKeys: masked.maskedKeys,
         logCount: logs.length,
         dossierCount: dossier.length,
-        summary: buildLogSummary(masked.text),
+        appliedCustomRules: analysis.matchedRuleIds
+          .filter((id) => id.startsWith("custom:"))
+          .map((id) => {
+            const rule = customRules.find((r) => r.id === id);
+            return { id, name: rule?.name ?? id };
+          }),
+        summary: buildLogSummary(masked.text, customRules),
       },
     });
   } catch (error) {

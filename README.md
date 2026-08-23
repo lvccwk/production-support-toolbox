@@ -140,7 +140,7 @@ Available tools (`POST /api/tools/<id>`):
 
 | id | what it does |
 | --- | --- |
-| `analyze` | rule-engine log analysis (severity, evidence, extracted fields) + incident dossier |
+| `analyze` | rule-engine log analysis (severity, evidence, extracted fields, quantitative summary) + incident dossier |
 | `compare` | before/after log comparison + regression verdict |
 | `json` | format / validate / minify / search |
 | `sql` | format / safety check / basic analysis (text-only, never executes) |
@@ -148,6 +148,7 @@ Available tools (`POST /api/tools/<id>`):
 | `http` | searchable HTTP status reference (meaning, causes, what-to-check) |
 | `encoding` | Base64 / URL encode-decode |
 | `cron` | describe 5-field cron + next 5 execution times |
+| `rules` | scoped custom rule registry (see below) |
 
 Data endpoints are also agent-callable: `/api/incidents` (CRUD),
 `/api/history` (search with `?q=`), `/api/export`, `/api/import`.
@@ -158,6 +159,39 @@ Data endpoints are also agent-callable: `/api/incidents` (CRUD),
 - `GET /api/tools` returns the manifest so an agent can self-serve without
   reading this README.
 - Both surfaces (GUI + API) share the same tested logic under `src/lib/`.
+
+## Scoped custom rules (teach the engine your system)
+
+The 27 built-in rules cover generic failure patterns. Your systems and
+company have their own signatures (internal error codes, batch names,
+gateway messages) — register them once and every future `analyze` recognises
+them, scoped so each system keeps its own namespace:
+
+```bash
+# Register a rule that only applies to PaymentBatch logs
+curl -X POST http://localhost:3000/api/tools/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"pay-step44-timeout","scope":{"type":"components","values":["PaymentBatch"]},"patterns":["STEP44.*timeout"],"severity":"High","rootCauses":["PAY gateway timeout at STEP44"],"investigation":["Check gateway health"]}'
+
+# List rules (filter by scope / preview which apply to a system)
+curl "http://localhost:3000/api/tools/rules?scope=components&system=PaymentBatch"
+
+# Update / delete
+curl -X PUT http://localhost:3000/api/tools/rules/1 -H "Content-Type: application/json" -d '{"severity":"Critical"}'
+curl -X DELETE http://localhost:3000/api/tools/rules/1
+```
+
+- **Scope** = `global` | `systems` (match the `system` hint) | `components`
+  (match component names detected in the log) — so rules for one system never
+  fire on another's logs.
+- Patterns are **regex-validated at registration** (invalid regex → 400) and
+  capped (≤20 patterns/rule, ≤300 chars/pattern, ≤200 active rules total,
+  `PST_MAX_CUSTOM_RULES` override).
+- Custom rules are merged into `/api/tools/analyze` (and its `summary`);
+  matched custom rules are listed in `appliedCustomRules` and prevent the
+  Unknown-Error triage. Rules can be exported/imported between machines via
+  `GET /api/tools/rules?export=json` (per-deployment storage — each company
+  keeps its own namespace).
 
 ## Project structure
 

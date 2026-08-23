@@ -1,6 +1,6 @@
 import { RULES } from "@/lib/rules/rules";
 import { firstLineTimestamp, lineLevel } from "@/lib/log-parser/parser";
-import type { ErrorType } from "@/types";
+import type { ErrorType, LogRule } from "@/types";
 
 /**
  * Quantitative log summary (feature ①): turns the rule engine's line-level
@@ -61,15 +61,16 @@ function toMinute(timestamp: string | null): string | null {
   return m ? m[1].replace("T", " ") : null;
 }
 
-export function buildLogSummary(text: string): LogSummary {
+export function buildLogSummary(text: string, extraRules: LogRule[] = []): LogSummary {
   const lines = text.split(/\r?\n/);
+  const rules = [...RULES, ...extraRules];
 
-  // --- one uncapped pass over RULES (same catalogue/patterns as the UI) ---
+  // --- one uncapped pass over rules (built-in + custom) -------------------
   const ruleHits: Record<string, number> = {};
   const typeHits = new Map<ErrorType, number>();
   const flaggedLines = new Set<number>();
 
-  for (const rule of RULES) {
+  for (const rule of rules) {
     let hits = 0;
     for (let i = 0; i < lines.length; i++) {
       if (rule.patterns.some((pattern) => pattern.test(lines[i]))) {
@@ -79,7 +80,7 @@ export function buildLogSummary(text: string): LogSummary {
     }
     if (hits > 0) {
       ruleHits[rule.id] = hits;
-      const type = RULE_TYPE[rule.id];
+      const type: ErrorType = RULE_TYPE[rule.id] ?? "Custom Error";
       typeHits.set(type, (typeHits.get(type) ?? 0) + hits);
     }
   }
