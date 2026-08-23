@@ -12,6 +12,7 @@ import * as alertTestRoute from "@/app/api/alerts/[id]/test/route";
 import * as notificationsRoute from "@/app/api/notifications/route";
 import * as openapiRoute from "@/app/api/openapi.json/route";
 import * as historyRoute from "@/app/api/history/route";
+import { processAlertJobs } from "@/lib/database/alerts";
 
 /**
  * Integration tests for the reporting/alerts API family (Dashboard, Alert
@@ -184,6 +185,20 @@ describe("Alert rules routes", () => {
       }),
     );
     expect(save.status).toBe(201);
+
+    // Delivery is async (the route kicks the worker fire-and-forget, and the
+    // worker interval also drains). Poll until the notification settles.
+    let status = "pending";
+    for (let i = 0; i < 50; i += 1) {
+      const notif = await notificationsRoute.GET(fakeRequest("http://localhost/api/notifications"));
+      const body = (await json(notif)).data as { notifications: Array<{ ruleName: string; status: string }> };
+      if (body.notifications.length === 0) throw new Error("expected a notification");
+      status = body.notifications[0].status;
+      if (status === "sent") break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // Also prove the worker path itself drains (idempotent — nothing left to do).
+    await processAlertJobs();
 
     const notif = await notificationsRoute.GET(fakeRequest("http://localhost/api/notifications"));
     const body = (await json(notif)).data as { notifications: Array<{ ruleName: string; status: string }> };

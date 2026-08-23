@@ -15,6 +15,7 @@ import {
   getAlertRule,
   listAlertRules,
   listNotifications,
+  processAlertJobs,
   sendTestAlert,
   updateAlertRule,
   validateAlertRuleInput,
@@ -245,36 +246,104 @@ describe("evaluateAlerts", () => {
     expect(listNotifications()).toHaveLength(0);
   });
 
-  it("fires a matching rule against a saved High+ entry and records in-app + webhook rows", async () => {
+  it("enqueues a webhook job on save (pending) and delivers it via the background worker", async () => {
     const rule = createAlertRule(ruleInput());
     const fired = await evaluateAlerts(savedEntry("Critical", "ledger", ["Timeout"]), {
       fetchImpl: okFetch,
     });
     expect(fired).toBe(1);
 
-    const notifications = listNotifications();
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0].ruleId).toBe(rule.id);
-    expect(notifications[0].ruleName).toBe(rule.name);
-    expect(notifications[0].channel).toBe("webhook");
-    expect(notifications[0].status).toBe("sent");
-    expect(notifications[0].level).toBe("Critical");
-    expect(notifications[0].message).toContain("Ledger batch timed out");
-    expect(notifications[0].message).toContain("[ledger]");
-    expect(notifications[0].message).toContain("Timeout");
+    const pending = listNotifications();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].ruleId).toBe(rule.id);
+    expect(pending[0].ruleName).toBe(rule.name);
+    expect(pending[0].channel).toBe("webhook");
+    expect(pending[0].status).toBe("pending"); // save responded fast, not yet delivered
+    expect(pending[0].level).toBe("Critical");
+    expect(pending[0].message).toContain("Ledger batch timed out");
+    expect(pending[0].message).toContain("[ledger]");
+    expect(pending[0].message).toContain("Timeout");
+
+    const processed = await processAlertJobs({ fetchImpl: okFetch });
+    expect(processed).toBe(1);
+    const done = listNotifications();
+    expect(done[0].status).toBe("sent");
+    expect(done[0].detail).toMatch(/HTTP 200/);
   });
 
-  it("records failed webhooks without throwing and without breaking the save", async () => {
+  it("marks a webhook permanently failed after max attempts (never breaks the save)", async () => {
     createAlertRule(ruleInput());
+    vi.stubEnv("PST_ALERT_MAX_ATTEMPTS", "1");
     const fired = await evaluateAlerts(savedEntry("Critical", "ledger", ["Timeout"]), {
       fetchImpl: failFetch,
     });
     expect(fired).toBe(1);
+    expect(listNotifications()[0].status).toBe("pending");
+
+    const processed = await processAlertJobs({ fetchImpl: failFetch });
+    expect(processed).toBe(1);
     const notification = listNotifications()[0];
     expect(notification.status).toBe("failed");
     expect(notification.detail).toMatch(/HTTP 500/);
-    // The live-history entry is intact.
-    expect(listNotifications()).toHaveLength(1);
+    expect(notification.detail).toContain("1 次嘗試後放棄");
+  });
+
+  it("retries a transient failure with exponential backoff, then succeeds", async () => {
+    createAlertRule(ruleInput());
+    const t0 = "2026-08-21T08:00:00.000Z";
+    await evaluateAlerts(savedEntry("High", "ledger", ["Timeout"]), {
+      fetchImpl: okFetch,
+      now: t0,
+    });
+
+    let calls = 0;
+    const flaky = (async () => {
+      calls += 1;
+      if (calls === 1) return new Response("nope", { status: 503 });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    const first = await processAlertJobs({ fetchImpl: flaky, now: t0 });
+    expect(first).toBe(1); // attempt 1 fails transiently
+    expect(listNotifications()[0].status).toBe("pending");
+
+    // Backoff puts the next attempt ~1 minute later; a later pass succeeds.
+    const second = await processAlertJobs({
+      fetchImpl: flaky,
+      now: "2026-08-21T08:01:10.000Z",
+    });
+    expect(second).toBe(1);
+    const notification = listNotifications()[0];
+    expect(notification.status).toBe("sent");
+    expect(notification.detail).toMatch(/HTTP 200/);
+  });
+
+  it("gives up a webhook after the configured max attempts (default 3)", async () => {
+    createAlertRule(ruleInput());
+    const base = Date.parse("2026-08-21T08:00:00.000Z");
+    await evaluateAlerts(savedEntry("Critical", "ledger", ["Timeout"]), {
+      fetchImpl: okFetch,
+      now: new Date(base).toISOString(),
+    });
+
+    let attempts = 0;
+    const alwaysFail = (async () => {
+      attempts += 1;
+      return new Response("nope", { status: 500 });
+    }) as typeof fetch;
+
+    // Backoffs: attempt 1 → +1m, attempt 2 → +2m; the third failure exceeds max 3.
+    await processAlertJobs({ fetchImpl: alwaysFail, now: new Date(base).toISOString() });
+    await processAlertJobs({ fetchImpl: alwaysFail, now: new Date(base + 61_000).toISOString() });
+    const last = await processAlertJobs({
+      fetchImpl: alwaysFail,
+      now: new Date(base + 183_000).toISOString(),
+    });
+    expect(last).toBe(1);
+    expect(attempts).toBe(3);
+    const notification = listNotifications()[0];
+    expect(notification.status).toBe("failed");
+    expect(notification.detail).toContain("3 次嘗試後放棄");
   });
 
   it("records in-app-only entries when the rule has no webhook channels", async () => {

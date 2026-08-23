@@ -110,6 +110,8 @@ Rules:
 | `PST_MAX_ALERT_RULES` | active alert-rule cap (default 100) |
 | `PST_ALERTS_ENABLED=off` | disable alert evaluation entirely (rules stay configurable) |
 | `PST_ALERT_WEBHOOK_TIMEOUT_MS` | webhook delivery timeout (default 5000) |
+| `PST_ALERT_MAX_ATTEMPTS` | webhook delivery attempts before giving up (default 3) |
+| `PST_ALERT_WORKER_INTERVAL_MS` | background worker poll interval (default 30000) |
 | `PST_BACKUP_RETENTION` | days of `backups-*.json` to keep (default 30) |
 | `PST_AUTO_BACKUP=off` | disable the daily auto-backup |
 | `PST_DATA_DIR` | SQLite file location override |
@@ -131,7 +133,7 @@ Rules:
 | **Support History** | Explicitly saved analyses (date, tool, system, summary, severity). Search, delete, **re-open** (the original inputs are restored in the tool). Nothing is stored automatically. |
 | **Dashboard** | Aggregated report over saved analyses + incidents — 總數 / High+ 佔比 / AI-fallback 次數 / 開嘅 incidents，severity 分佈、top error types（直接喺 SQLite 用 JSON1 由儲存嘅分析快照聚合）、工具用量、系統 Top 10、每日 High+ 趨勢。唔使開 CSV 都睇到趨勢。一鍵匯出：**報表 CSV**（sectioned 聚合數據，client 本地生成，唔包原始 log）。完整原始記錄（含 payload）只喺 Settings 嘅 history 匯出提供。 |
 | **Custom Rules** | Custom-rules 嘅人用 GUI：瀏覽／新增／編輯／啟停／刪除規則（scope、patterns、severity、分析輸出欄位），每次儲存行足 server 全套驗證（regex 語法 + ReDoS 篩查 + torture test）。非技術用戶唔使掂 API。 |
-| **Alerts** | Alert rules + 通知記錄：規則對「Save Analysis」呢一刻評估（minSeverity ≥、可選 errorTypes / systems / tools 過濾），中咗一定記錄站內通知；可選 webhook（generic POST JSON —— Teams / Slack / 任何嘢）做額外送達，per-signal cooldown 防轟炸。「Send Test」即場驗證 webhook。 |
+| **Alerts** | Alert rules + 通知記錄：規則對「Save Analysis」呢一刻評估（minSeverity ≥、可選 errorTypes / systems / tools 過濾），中咗一定記錄站內通知；webhook（generic POST JSON —— Teams / Slack / 任何嘢）由背景 worker **非同步送出**（Save 即時回應、失敗自動 retry + backoff，唔會拖慢儲存），per-signal cooldown 防轟炸。「Send Test」即場驗證 webhook。 |
 | **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. The JSON backup is schema v2 and covers **incidents + history + custom rules**; imports are all-or-nothing (any invalid entry rolls the whole bundle back, duplicates skipped). CSVs are **spreadsheet-safe** (formula-injection prefixes `= + - @` neutralized). History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); `createdAt` is written as Hong Kong local wall clock (`YYYY-MM-DD HH:mm:ss`, UTC+8) instead of raw ISO so spreadsheets look sane. The JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. The Agent API section links the machine-readable OpenAPI document (`/api/openapi.json`). |
 
 Every tool follows the same pattern: **Input → Action buttons → Result →
@@ -315,11 +317,19 @@ never automatic runs) and fire **locally + deterministically**:
   analysis snapshot (rules or AI-fallback output), never from re-running AI.
 - **Delivery** — every firing is **always recorded** as a local notification
   (visible under **Alerts** → 通知記錄), so the concept works with a rule and
-  zero other config. Optionally the rule has webhook URL(s) — delivery is a
-  generic `POST` JSON (Teams / Slack / anything):
+  zero other config. Webhook delivery is **async and decoupled**:
+  `Save Analysis` → the rule matches → the worker **enqueues** the webhook
+  job in the same request (notification starts `status=pending`) → the save
+  response returns **immediately** (it never blocks on network) → a background
+  worker (started from `instrumentation.ts`, poll every
+  `PST_ALERT_WORKER_INTERVAL_MS`) delivers the generic `POST` JSON
+  (Teams / Slack / anything):
   `{ event, firedAt, rule, entry:{id,tool,system,summary,severity}, analysis:{errorTypes} }`.
-  The payload never contains the raw log. Webhook failures are recorded as
-  `status=failed` and **never break the save** that triggered them.
+  The payload never contains the raw log. Transient failures retry with
+  **exponential backoff** (1m, 2m, 4m… cap 1h, up to `PST_ALERT_MAX_ATTEMPTS`)
+  and the notification only settles to `sent` / `failed` at the end; a broken
+  webhook can **never break the save**. Jobs persist in SQLite, so anything
+  queued while the server was off is delivered when it is next started.
 - **Cooldown** — per (rule, signal) minutes; the same system/severity/error
   signature is suppressed inside the window (spam guard).
 - **Test** — `POST /api/alerts/[id]/test` (or the GUI `Send Test` button)

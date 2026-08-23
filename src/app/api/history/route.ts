@@ -4,7 +4,7 @@ import {
   listHistory,
   validateHistoryInput,
 } from "@/lib/database/history";
-import { evaluateAlerts } from "@/lib/database/alerts";
+import { evaluateAlerts, processAlertJobs } from "@/lib/database/alerts";
 import { withApi } from "@/lib/api/route";
 
 export const runtime = "nodejs";
@@ -22,8 +22,10 @@ export async function GET(request: NextRequest) {
  * POST /api/history — save an analysis explicitly (never automatic).
  *
  * Alert rules are evaluated against the freshly saved entry (deterministic,
- * local). evaluateAlerts NEVER throws and webhook failures are recorded as
- * failed notifications, so a broken webhook can never break the save.
+ * local). evaluateAlerts NEVER throws and only enqueues webhook jobs — the
+ * response never blocks on webhook delivery. Processing happens in the
+ * background worker; here we just nudge it so delivery starts immediately
+ * instead of waiting for the next interval tick.
  */
 export async function POST(request: NextRequest) {
   return withApi(request, { route: "/api/history", scope: "write" }, async () => {
@@ -31,6 +33,8 @@ export async function POST(request: NextRequest) {
     const input = validateHistoryInput(raw);
     const entry = createHistoryEntry(input);
     await evaluateAlerts(entry);
+    // Fire-and-forget: the save response must not wait for outbound network.
+    void processAlertJobs().catch(() => undefined);
     return new NextResponse(JSON.stringify({ ok: true, data: entry }), {
       status: 201,
       headers: { "Content-Type": "application/json" },

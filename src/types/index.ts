@@ -384,7 +384,7 @@ export interface AlertRuleInput {
   cooldownMinutes?: number;
 }
 
-export type NotificationStatus = "sent" | "failed";
+export type NotificationStatus = "sent" | "failed" | "pending";
 export type NotificationChannel = "webhook" | "in-app" | "test";
 
 /** One fired alert — always recorded locally, webhook delivery optional. */

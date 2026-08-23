@@ -23,10 +23,15 @@ import { parseHistoryAnalysis } from "./export";
  *     logic as the rule engine, no AI), firing only inside the history save
  *     route — imports/backfills deliberately do NOT fire alerts.
  *   - every firing is ALWAYS recorded as a local notification row (so the
- *     concept works with zero configuration beyond a rule), and webhook
- *     delivery (generic POST JSON — Teams/Slack/anything) is best-effort.
- *   - `evaluateAlerts` NEVER throws: a failing webhook must not fail the
- *     save it was triggered by.
+ *     concept works with zero configuration beyond a rule).
+ *   - webhook delivery is ASYNC and decoupled from the save: `evaluateAlerts`
+ *     only enqueues jobs (and writes "pending" notifications) in the same
+ *     request, so the Save Analysis response never blocks on the network.
+ *     A background worker (`processAlertJobs`, started from
+ *     instrumentation.ts) delivers with exponential-backoff retries and
+ *     finally marks the notification sent / failed.
+ *   - `evaluateAlerts` / `processAlertJobs` NEVER throw: a failing or slow
+ *     webhook can never fail the save it was triggered by.
  *   - per (rule, signal) cooldown suppresses repeat spam from the same
  *     system/severity/error-type signature.
  */
@@ -60,6 +65,18 @@ export function alertsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 export function alertWebhookTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   const fromEnv = Number(env.PST_ALERT_WEBHOOK_TIMEOUT_MS);
   return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 5000;
+}
+
+/** Delivery attempts before a webhook job is marked permanently failed. */
+export function alertMaxAttempts(env: NodeJS.ProcessEnv = process.env): number {
+  const fromEnv = Number(env.PST_ALERT_MAX_ATTEMPTS);
+  return Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : 3;
+}
+
+/** Background worker poll interval. */
+export function alertWorkerIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+  const fromEnv = Number(env.PST_ALERT_WORKER_INTERVAL_MS);
+  return Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : 30_000;
 }
 
 const SEVERITIES: Severity[] = ["Critical", "High", "Medium", "Low", "Informational"];
@@ -358,7 +375,7 @@ function toNotification(row: NotificationRow): Notification {
     )
       ? (row.channel as NotificationChannel)
       : "in-app",
-    status: row.status === "failed" ? "failed" : "sent",
+    status: row.status === "failed" ? "failed" : row.status === "pending" ? "pending" : "sent",
     detail: row.detail,
   };
 }
@@ -540,11 +557,58 @@ export interface EvaluateOptions {
   fetchImpl?: typeof fetch;
 }
 
+export interface AlertJobRow {
+  id: number;
+  notification_id: number;
+  rule_id: number | null;
+  rule_name: string;
+  webhook_url: string;
+  payload: string;
+  attempts: number;
+  max_attempts: number;
+  status: string; // pending | failed (terminal)
+  next_attempt_at: string;
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Insert one webhook job (delivery happens later in the background worker). */
+function enqueueWebhookJob(input: {
+  notificationId: number;
+  ruleId: number | null;
+  ruleName: string;
+  webhookUrl: string;
+  payload: Record<string, unknown>;
+  nowIso: string;
+  maxAttempts: number;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO alert_jobs
+       (notification_id, rule_id, rule_name, webhook_url, payload, attempts,
+        max_attempts, status, next_attempt_at, last_error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, 'pending', ?, '', ?, ?)`,
+    )
+    .run(
+      input.notificationId,
+      input.ruleId,
+      input.ruleName,
+      input.webhookUrl,
+      JSON.stringify(input.payload),
+      input.maxAttempts,
+      input.nowIso,
+      input.nowIso,
+      input.nowIso,
+    );
+}
+
 /**
- * Evaluate all alert rules against one freshly-saved history entry and fire
- * the matches (webhook + local notification). NEVER throws — webhook
- * failures are recorded as failed notifications, and cooldown suppresses
- * repeats. Imported/backfilled entries do NOT go through this path.
+ * Evaluate all alert rules against one freshly-saved history entry and
+ * enqueue the matches. In-app notifications are recorded immediately; webhook
+ * notifications start as "pending" and are delivered asynchronously by
+ * `processAlertJobs`. NEVER throws — a broken webhook can never break the
+ * save. Imported/backfilled entries do NOT go through this path.
  */
 export async function evaluateAlerts(
   entry: HistoryEntry,
@@ -599,20 +663,24 @@ export async function evaluateAlerts(
         continue;
       }
       for (const channel of rule.channels) {
-        const outcome = await deliverWebhook(
-          channel.url,
-          webhookPayload("saved", rule, entry, errorTypes, nowIso),
-          { fetchImpl: opts.fetchImpl },
-        );
-        insertNotification({
+        const notificationId = insertNotification({
           ruleId: rule.id,
           ruleName: rule.name,
           level,
           title: rule.name,
           message,
           channel: "webhook",
-          status: outcome.ok ? "sent" : "failed",
-          detail: `${channel.url.slice(0, 120)} — ${outcome.detail}`,
+          status: "pending",
+          detail: `queued → ${channel.url.slice(0, 120)}`,
+        });
+        enqueueWebhookJob({
+          notificationId,
+          ruleId: rule.id,
+          ruleName: rule.name,
+          webhookUrl: channel.url,
+          payload: webhookPayload("saved", rule, entry, errorTypes, nowIso),
+          nowIso,
+          maxAttempts: alertMaxAttempts(),
         });
       }
     }
@@ -622,6 +690,109 @@ export async function evaluateAlerts(
     // Alerts must never break the save that triggered them.
     return 0;
   }
+}
+
+export interface ProcessJobsOptions {
+  /** Test seam for deterministic time. */
+  now?: string;
+  fetchImpl?: typeof fetch;
+  /** Max jobs per pass (keeps a tick short). */
+  limit?: number;
+}
+
+/** In-flight claims so interval ticks and request-path drains never double-send. */
+const processingJobs = new Set<number>();
+
+/**
+ * Background webhook worker: deliver all due jobs, record the outcome on the
+ * linked notification (pending → sent / failed), retry transient failures
+ * with exponential backoff, and give up after max_attempts. NEVER throws.
+ * Returns how many jobs were processed this pass. Jobs persist in SQLite, so
+ * anything queued while the server was down is sent once it is back up.
+ */
+export async function processAlertJobs(opts: ProcessJobsOptions = {}): Promise<number> {
+  if (!alertsEnabled()) return 0;
+  const nowIso = opts.now ?? new Date().toISOString();
+  const limit = opts.limit ?? 20;
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM alert_jobs
+       WHERE status = 'pending' AND next_attempt_at <= ?
+       ORDER BY next_attempt_at ASC, id ASC
+       LIMIT ?`,
+    )
+    .all(nowIso, limit) as AlertJobRow[];
+
+  let processed = 0;
+  for (const row of rows) {
+    if (processingJobs.has(row.id)) continue;
+    processingJobs.add(row.id);
+    try {
+      const outcome = await deliverWebhook(
+        row.webhook_url,
+        parseJson(row.payload, null),
+        { fetchImpl: opts.fetchImpl },
+      );
+      const attempts = row.attempts + 1;
+      const db = getDb();
+      if (outcome.ok) {
+        db.prepare("UPDATE notifications SET status = 'sent', detail = ? WHERE id = ?").run(
+          `${row.webhook_url.slice(0, 120)} — ${outcome.detail}`,
+          row.notification_id,
+        );
+        db.prepare("DELETE FROM alert_jobs WHERE id = ?").run(row.id);
+      } else if (attempts >= row.max_attempts) {
+        db.prepare("UPDATE notifications SET status = 'failed', detail = ? WHERE id = ?").run(
+          `${row.webhook_url.slice(0, 120)} — ${outcome.detail}（${attempts} 次嘗試後放棄）`,
+          row.notification_id,
+        );
+        db.prepare(
+          `UPDATE alert_jobs SET status = 'failed', attempts = ?, last_error = ?, updated_at = ? WHERE id = ?`,
+        ).run(attempts, outcome.detail, nowIso, row.id);
+      } else {
+        // Transient failure: retry later with exponential backoff (1m, 2m, 4m… capped at 1h).
+        const backoffMs = Math.min(60 * 60_000, 60_000 * 2 ** (attempts - 1));
+        const nextAt = new Date(new Date(nowIso).getTime() + backoffMs).toISOString();
+        db.prepare(
+          `UPDATE alert_jobs SET attempts = ?, next_attempt_at = ?, last_error = ?, updated_at = ?
+           WHERE id = ? AND status = 'pending'`,
+        ).run(attempts, nextAt, outcome.detail, nowIso, row.id);
+      }
+      processed += 1;
+    } catch {
+      // deliverWebhook never throws on fetch errors; this guards anything else.
+    } finally {
+      processingJobs.delete(row.id);
+    }
+  }
+
+  // Housekeeping: drop terminal jobs older than 90 days (notifications keep the audit).
+  const cutoff = new Date(new Date(nowIso).getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  getDb()
+    .prepare("DELETE FROM alert_jobs WHERE status IN ('sent', 'failed') AND updated_at < ?")
+    .run(cutoff);
+  return processed;
+}
+
+const workerGlobal = globalThis as { __pstAlertWorkerStarted?: boolean };
+
+/**
+ * Start the in-process background worker (called once from Next.js
+ * instrumentation). Guarded so dev-server reloads never spawn a second
+ * interval. Timers are unref'd so they never keep the process alive on their
+ * own.
+ */
+export function startAlertWorker(intervalMs?: number): void {
+  if (workerGlobal.__pstAlertWorkerStarted) return;
+  workerGlobal.__pstAlertWorkerStarted = true;
+  const every = intervalMs ?? alertWorkerIntervalMs();
+  const tick = (): void => {
+    void processAlertJobs().catch(() => undefined);
+  };
+  const timer = setInterval(tick, every);
+  timer.unref?.();
+  const first = setTimeout(tick, 1_000);
+  first.unref?.();
 }
 
 /**

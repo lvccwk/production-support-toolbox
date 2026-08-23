@@ -144,6 +144,25 @@ function migrate(database: Database.Database): void {
       fired_at TEXT NOT NULL,
       PRIMARY KEY (rule_id, fire_key)
     );
+
+    -- Async webhook delivery queue: Save Analysis only enqueues here and
+    -- responds immediately; a background worker delivers with retry/backoff.
+    CREATE TABLE IF NOT EXISTS alert_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_id INTEGER NOT NULL,
+      rule_id INTEGER,
+      rule_name TEXT NOT NULL DEFAULT '',
+      webhook_url TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      status TEXT NOT NULL DEFAULT 'pending',
+      next_attempt_at TEXT NOT NULL,
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_alert_jobs_due ON alert_jobs (status, next_attempt_at);
   `);
 
   // Legacy databases (pre-hybrid era) created analysis_cache with a different

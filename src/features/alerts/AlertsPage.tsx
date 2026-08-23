@@ -455,7 +455,7 @@ export function AlertsPage() {
 
       <Card
         title="通知記錄 Notifications"
-        description="每次觸發都一定記錄（就算 webhook 失敗都會記 status=failed）。Webhook payload 只包 rule + 安全摘要（system / summary / severity / errorTypes）—— 唔會送出原始 log。"
+        description="每次觸發都一定記錄；webhook 由背景 worker 非同步送出（失敗自動 retry，最終先會標 pending → sent / failed）。Webhook payload 只包 rule + 安全摘要（system / summary / severity / errorTypes）—— 唔會送出原始 log。"
         actions={
           notifications.length > 0 ? (
             <Button variant="danger" size="sm" onClick={() => void clearNotifications()}>
@@ -481,10 +481,12 @@ export function AlertsPage() {
                     className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
                       n.status === "sent"
                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-                        : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+                        : n.status === "pending"
+                          ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                          : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
                     }`}
                   >
-                    {n.channel} · {n.status}
+                    {n.channel} · {n.status === "pending" ? "待發送" : n.status}
                   </span>
                 </div>
                 <p className="mt-0.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">

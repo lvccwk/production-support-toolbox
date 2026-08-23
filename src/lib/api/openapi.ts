@@ -205,7 +205,7 @@ const notification: JsonSchema = {
     title: { type: "string" },
     message: { type: "string" },
     channel: { type: "string", enum: ["webhook", "in-app", "test"] },
-    status: { type: "string", enum: ["sent", "failed"] },
+    status: { type: "string", enum: ["pending", "sent", "failed"] },
     detail: { type: "string", description: "Delivery detail (HTTP status / error). Never user data." },
   },
 };
