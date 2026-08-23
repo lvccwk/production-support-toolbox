@@ -2,18 +2,21 @@
 
 import { useRef, useState } from "react";
 import { Button, ErrorNote, Note } from "@/components/ui";
+import { apiFetch, errorMessage } from "@/lib/api/client";
 
 interface ImportResult {
   importedIncidents: number;
   importedHistory: number;
+  importedRules: number;
   skipped: number;
+  skippedRules: number;
 }
 
 /**
  * Export / import controls shared by the incident and history pages.
- * - Export JSON: full backup bundle (both tables, schema-versioned).
+ * - Export JSON: full backup bundle (both tables + custom rules, schema v2).
  * - Export CSV: flat export of the current scope, Excel-friendly.
- * - Import: restore a backup JSON (duplicates skipped).
+ * - Import: restore a backup JSON (duplicates skipped, all-or-nothing).
  */
 export function TransferButtons({
   scope,
@@ -32,12 +35,10 @@ export function TransferButtons({
     setFileError("");
     setNotice("");
     try {
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        setFileError(body?.error ?? "Export failed.");
+        const body = (await res.json().catch(() => null)) as unknown;
+        setFileError(errorMessage(body, "Export failed."));
         return;
       }
       const blob = await res.blob();
@@ -58,7 +59,7 @@ export function TransferButtons({
     setNotice("");
     try {
       const text = await file.text();
-      const res = await fetch("/api/import", {
+      const res = await apiFetch("/api/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: text }),
@@ -66,10 +67,10 @@ export function TransferButtons({
       const json = (await res.json().catch(() => null)) as {
         ok?: boolean;
         data?: ImportResult;
-        error?: string;
+        error?: unknown;
       } | null;
       if (!res.ok || !json?.ok) {
-        setFileError(json?.error ?? "Import failed.");
+        setFileError(errorMessage(json, "Import failed."));
         return;
       }
       const r = json.data;
@@ -78,7 +79,7 @@ export function TransferButtons({
         return;
       }
       setNotice(
-        `Imported ${r.importedIncidents} incident(s) and ${r.importedHistory} history entr(y/ies); ${r.skipped} duplicate(s) skipped.`,
+        `Imported ${r.importedIncidents} incident(s), ${r.importedHistory} history entr(y/ies) and ${r.importedRules} rule(s); ${r.skipped} duplicate(s) skipped.`,
       );
       onImported?.();
     } catch {

@@ -4,9 +4,11 @@
   "private": true,
   "description": "Local-first production support toolbox: log analysis, log comparison, JSON/SQL/timestamp/cron helpers, incident notes and support history.",
   "scripts": {
-    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev -H 127.0.0.1",
+    "dev:remote": "cross-env NEXT_TELEMETRY_DISABLED=1 node scripts/check-remote.mjs && next dev -H 0.0.0.0",
     "build": "cross-env NEXT_TELEMETRY_DISABLED=1 next build",
-    "start": "cross-env NEXT_TELEMETRY_DISABLED=1 next start",
+    "start": "cross-env NEXT_TELEMETRY_DISABLED=1 next start -H 127.0.0.1",
+    "start:remote": "cross-env NEXT_TELEMETRY_DISABLED=1 node scripts/check-remote.mjs && next start -H 0.0.0.0",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",

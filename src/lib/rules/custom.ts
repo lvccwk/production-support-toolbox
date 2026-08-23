@@ -1,4 +1,5 @@
 import { ToolError } from "@/lib/errors";
+import { assertPatternsSafe } from "./regexSafety";
 import type {
   CustomRule,
   CustomRuleInput,
@@ -79,15 +80,11 @@ export function validateCustomRuleInput(raw: Partial<CustomRuleInput>): CustomRu
   const patterns = strArray(raw.patterns, "patterns", CUSTOM_LIMITS.patternsPerRule, CUSTOM_LIMITS.patternChars, true);
   if (patterns.length === 0) throw new ToolError("At least one pattern is required.");
 
-  // Compile-check each pattern (reject invalid regex upfront).
-  patterns.forEach((pattern, index) => {
-    try {
-      new RegExp(pattern);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : "invalid regex";
-      throw new ToolError(`Invalid pattern #${index + 1}: ${reason}`);
-    }
-  });
+  // Syntax + static ReDoS screening (rejects invalid regexes with the
+  // offending index, and dangerous shapes such as `(a+)+` / backreferences).
+  // A full empirical, time-bounded check runs at the API layer before the
+  // rule is stored (see torture.ts).
+  assertPatternsSafe(patterns);
 
   const severity = raw.severity;
   if (typeof severity !== "string" || !SEVERITIES.includes(severity as Severity)) {

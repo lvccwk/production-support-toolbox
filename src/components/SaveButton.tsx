@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button, Note } from "@/components/ui";
 import { detectSensitiveData } from "@/lib/sensitive/detector";
+import { apiFetch, errorMessage } from "@/lib/api/client";
 import type { Severity } from "@/types";
 
 /**
@@ -41,13 +42,13 @@ export function SaveButton({
   async function save() {
     setState("saving");
     try {
-      const res = await fetch("/api/history", {
+      const res = await apiFetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tool, system, summary, severity, payload }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Failed to save analysis.");
+      const json = (await res.json()) as { ok: boolean; error?: unknown };
+      if (!json.ok) throw new Error(errorMessage(json, "Failed to save analysis."));
       setState("saved");
       setMessage("Saved to Support History.");
       onSaved?.();

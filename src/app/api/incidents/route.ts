@@ -4,39 +4,28 @@ import {
   listIncidents,
   validateIncidentInput,
 } from "@/lib/database/incidents";
-import { ToolError } from "@/lib/errors";
+import { withApi } from "@/lib/api/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function errorResponse(error: unknown, status = 400): NextResponse {
-  const message =
-    error instanceof ToolError
-      ? error.message
-      : error instanceof Error
-        ? error.message
-        : "Unexpected error.";
-  return NextResponse.json({ ok: false, error: message }, { status });
-}
-
 /** GET /api/incidents?q=... — list incidents (optional search). */
 export async function GET(request: NextRequest) {
-  try {
+  return withApi(request, { route: "/api/incidents", scope: "read" }, async () => {
     const query = request.nextUrl.searchParams.get("q") ?? undefined;
-    return NextResponse.json({ ok: true, data: listIncidents(query) });
-  } catch (error) {
-    return errorResponse(error, 500);
-  }
+    return listIncidents(query);
+  });
 }
 
 /** POST /api/incidents — create an incident. */
 export async function POST(request: NextRequest) {
-  try {
+  return withApi(request, { route: "/api/incidents", scope: "write" }, async () => {
     const raw = (await request.json()) as Record<string, unknown>;
     const input = validateIncidentInput(raw);
     const incident = createIncident(input);
-    return NextResponse.json({ ok: true, data: incident }, { status: 201 });
-  } catch (error) {
-    return errorResponse(error);
-  }
+    return new NextResponse(JSON.stringify({ ok: true, data: incident }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
 }

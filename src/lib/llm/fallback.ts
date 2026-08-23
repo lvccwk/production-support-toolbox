@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { getDb } from "@/lib/database/db";
-import { extractJsonBlock, tailText } from "./json";
+import { extractJsonBlock } from "./json";
 import { forceTraditionalAnalysis } from "./zh";
 
 /**
@@ -259,7 +259,15 @@ export async function runFallback(
 
     const bodyText = await response.text();
     if (!response.ok) {
-      return { ok: false, error: `OpenRouter HTTP ${response.status}: ${tailText(bodyText)}` };
+      // NEVER forward the upstream response body to the client: it can carry
+      // quota details, model names or echoed credentials. Keep only the
+      // status (and the broad category) so the caller can act on it.
+      const category =
+        response.status >= 500 ? "provider" : response.status === 401 || response.status === 403 ? "auth" : "request";
+      return {
+        ok: false,
+        error: `OpenRouter rejected the request (HTTP ${response.status}, ${category}).`,
+      };
     }
     let parsed: unknown;
     try {

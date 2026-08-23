@@ -102,6 +102,11 @@ export interface LogAnalysis {
   matchedEvidence: Array<{ ruleId: string; ruleName: string; evidence: EvidenceLine[] }>;
   /** Present only when error-level log lines matched no rule. */
   unknownTriage: UnknownTriage | null;
+  /**
+   * Rules whose patterns failed at runtime (defense in depth: a pattern that
+   * throws must never crash the request — the rule is skipped and reported).
+   */
+  skippedRules?: Array<{ ruleId: string; name: string; reason: string }>;
 }
 
 /** A class + line reference extracted from a stack frame, e.g. PaymentService.java:125 */

@@ -90,12 +90,13 @@ describe("export (Phase 2)", () => {
     expect(incident.id).toBeGreaterThan(0);
 
     const bundle = exportAllData();
-    expect(bundle.schemaVersion).toBe(1);
+    expect(bundle.schemaVersion).toBe(2);
     expect(bundle.incidents).toHaveLength(1);
     expect(bundle.history).toHaveLength(1);
+    expect(bundle.customRules).toEqual([]);
 
     const parsed = JSON.parse(bundleToJson(bundle)) as typeof bundle;
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.schemaVersion).toBe(2);
     expect(parsed.incidents[0]?.title).toBe(INCIDENT_INPUT.title);
   });
 
@@ -106,7 +107,13 @@ describe("export (Phase 2)", () => {
 
     const first = importBundleJson(json);
     // Same DB: everything already exists -> all skipped.
-    expect(first).toEqual({ importedIncidents: 0, importedHistory: 0, skipped: 2 });
+    expect(first).toEqual({
+      importedIncidents: 0,
+      importedHistory: 0,
+      importedRules: 0,
+      skipped: 2,
+      skippedRules: 0,
+    });
     expect(listIncidents()).toHaveLength(1);
     expect(listHistory()).toHaveLength(1);
 
@@ -114,12 +121,24 @@ describe("export (Phase 2)", () => {
     currentDbFile = path.join(tempDir, `fresh-${seq}.db`);
     initDb(currentDbFile);
     const restore = importBundleJson(json);
-    expect(restore).toEqual({ importedIncidents: 1, importedHistory: 1, skipped: 0 });
+    expect(restore).toEqual({
+      importedIncidents: 1,
+      importedHistory: 1,
+      importedRules: 0,
+      skipped: 0,
+      skippedRules: 0,
+    });
     expect(listHistory()[0]?.createdAt).toBe("2026-08-21T10:00:00.000Z");
 
     // Into the same DB again: all duplicates.
     const second = importBundleJson(json);
-    expect(second).toEqual({ importedIncidents: 0, importedHistory: 0, skipped: 2 });
+    expect(second).toEqual({
+      importedIncidents: 0,
+      importedHistory: 0,
+      importedRules: 0,
+      skipped: 2,
+      skippedRules: 0,
+    });
     expect(listIncidents()).toHaveLength(1);
     expect(listHistory()).toHaveLength(1);
   });
@@ -487,7 +506,7 @@ describe("history analysis in the JSON backup bundle", () => {
     expect(parsed.history[0]?.analysis.aiFallback).toBeNull();
   });
 
-  it("round-trips the enriched bundle through import (schema stays v1)", () => {
+  it("round-trips the enriched bundle through import (schema v2)", () => {
     const payload = JSON.stringify({
       input: "demo",
       system: "",
@@ -522,12 +541,24 @@ describe("history analysis in the JSON backup bundle", () => {
     );
     const json = bundleToJson(exportAllData());
     const first = importBundleJson(json);
-    expect(first).toEqual({ importedIncidents: 0, importedHistory: 0, skipped: 1 });
+    expect(first).toEqual({
+      importedIncidents: 0,
+      importedHistory: 0,
+      importedRules: 0,
+      skipped: 1,
+      skippedRules: 0,
+    });
     // A fresh DB still imports the enriched bundle (analysis field ignored on import).
     currentDbFile = path.join(tempDir, `enriched-${seq}.db`);
     initDb(currentDbFile);
     const restore = importBundleJson(json);
-    expect(restore).toEqual({ importedIncidents: 0, importedHistory: 1, skipped: 0 });
+    expect(restore).toEqual({
+      importedIncidents: 0,
+      importedHistory: 1,
+      importedRules: 0,
+      skipped: 0,
+      skippedRules: 0,
+    });
     expect(listHistory()[0]?.payload).toBe(payload);
   });
 });
@@ -549,7 +580,7 @@ describe("daily auto-backup", () => {
         incidents: unknown[];
         history: unknown[];
       };
-      expect(parsed.schemaVersion).toBe(1);
+      expect(parsed.schemaVersion).toBe(2);
       expect(Array.isArray(parsed.incidents)).toBe(true);
       expect(Array.isArray(parsed.history)).toBe(true);
 
@@ -578,3 +609,66 @@ describe("daily auto-backup", () => {
 function createIncidentFrom(input: IncidentInput): Incident {
   return createIncident(validateIncidentInput(input));
 }
+
+describe("CSV spreadsheet safety (§7)", () => {
+  const csvOf = (title: string): string => incidentsToCsv([incidentRow(1, title)]);
+
+  it("neutralizes =HYPERLINK(...) before quoting", () => {
+    const csv = csvOf('=HYPERLINK("http://evil.example","click")');
+    expect(csv).toContain('"\'=HYPERLINK(""http://evil.example"",""click"")"');
+  });
+
+  it("neutralizes +, - and @ prefixes too", () => {
+    expect(csvOf("+cmd|/C calc")).toContain('"\'+cmd|/C calc"');
+    expect(csvOf("-1+1")).toContain(`"'-1+1"`);
+    expect(csvOf("@SUM(1,2)")).toContain('"\'@SUM(1,2)"');
+  });
+
+  it("defeats whitespace / tab / control-character bypasses", () => {
+    expect(csvOf("\t=1+1")).toContain('"\'\t=1+1"');
+    expect(csvOf("\n=cmd()")).toContain('"\'\n=cmd()"');
+    expect(csvOf("  =SUM(1,2)")).toContain('"\'  =SUM(1,2)"');
+  });
+
+  it("does not touch safe content — quotes, commas, Unicode, multiline round-trip", () => {
+    const csv = incidentsToCsv([
+      incidentRow(1, 'a,b "quoted"'),
+      incidentRow(2, "中文繁體-付款"),
+      incidentRow(3, "line1\nline2\r\nline3"),
+      incidentRow(4, "normal title 123"),
+    ]);
+    expect(csv).toContain('"a,b ""quoted"""');
+    expect(csv).toContain('"中文繁體-付款"');
+    expect(csv).toContain('"line1\nline2\r\nline3"');
+    expect(csv).toContain('"normal title 123"');
+    // Only dangerous cells carry the apostrophe marker.
+    expect(csv.match(/"/g) ?? []).toBeTruthy();
+    expect(csv.split("\r\n").filter((line) => line.startsWith("'"))).toHaveLength(0);
+  });
+
+  it("leaves numeric ids and controlled enums as plain quoted values", () => {
+    const csv = csvOf("severity title");
+    expect(csv).toContain('"1"'); // id stays numeric
+    expect(csv).toContain('"Low"'); // severity enum unaffected
+  });
+
+  it("history CSV also sanitizes the summary cell; raw payload JSON starts with { so it is left intact", () => {
+    const csv = historyToCsv([
+      {
+        id: 1,
+        createdAt: "2026-08-21T10:00:00.000Z",
+        tool: "log-analyzer",
+        system: "",
+        summary: "=HYPERLINK(x)",
+        severity: null,
+        payload: '{"input":"@SUM(1,2)"}',
+      },
+    ]);
+    expect(csv).toContain('"\'=HYPERLINK(x)"');
+    // The formula lives INSIDE the JSON payload, which starts with `{` — not a
+    // spreadsheet trigger — so the payload column stays untouched (round-trip).
+    expect(csv).toContain('"{""input"":""@SUM(1,2)""}"');
+    // The derived inputPreview (which contains the raw input) IS sanitized.
+    expect(csv).toContain('"\'@SUM(1,2)"');
+  });
+});

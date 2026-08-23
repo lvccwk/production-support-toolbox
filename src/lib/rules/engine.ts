@@ -101,20 +101,35 @@ function dedupeTypes(items: ErrorType[]): ErrorType[] {
 function matchRules(
   text: string,
   rules: LogRule[],
-): Array<{ rule: LogRule; evidence: EvidenceLine[] }> {
+): {
+  matches: Array<{ rule: LogRule; evidence: EvidenceLine[] }>;
+  failures: Array<{ ruleId: string; name: string; reason: string }>;
+} {
   const lines = text.split(/\r?\n/);
-  const out: Array<{ rule: LogRule; evidence: EvidenceLine[] }> = [];
+  const matches: Array<{ rule: LogRule; evidence: EvidenceLine[] }> = [];
+  const failures: Array<{ ruleId: string; name: string; reason: string }> = [];
   for (const rule of rules) {
     const evidence: EvidenceLine[] = [];
-    for (let i = 0; i < lines.length && evidence.length < MAX_EVIDENCE_LINES_PER_RULE; i++) {
-      const line = lines[i];
-      if (rule.patterns.some((pattern) => pattern.test(line))) {
-        evidence.push({ line: i + 1, text: line.trim() });
+    try {
+      for (let i = 0; i < lines.length && evidence.length < MAX_EVIDENCE_LINES_PER_RULE; i++) {
+        const line = lines[i];
+        if (rule.patterns.some((pattern) => pattern.test(line))) {
+          evidence.push({ line: i + 1, text: line.trim() });
+        }
       }
+    } catch {
+      // A pattern must never crash the whole request: skip the rule and
+      // report it (no internal stack traces leak to the client).
+      failures.push({
+        ruleId: rule.id,
+        name: rule.name,
+        reason: "One of its patterns threw at runtime and was skipped.",
+      });
+      continue;
     }
-    if (evidence.length > 0) out.push({ rule, evidence });
+    if (evidence.length > 0) matches.push({ rule, evidence });
   }
-  return out;
+  return { matches, failures };
 }
 
 /** Generic checks that are not already covered by the rules' own steps. */
@@ -151,7 +166,7 @@ export function analyzeLog(
   info: ExtractedLogInfo,
   extraRules: LogRule[] = [],
 ): LogAnalysis {
-  const matches = matchRules(text, [...RULES, ...extraRules]);
+  const { matches, failures } = matchRules(text, [...RULES, ...extraRules]);
   const matched = matches.map((m) => m.rule);
 
   // --- error types -------------------------------------------------------
@@ -291,6 +306,7 @@ export function analyzeLog(
       ruleName: rule.name,
       evidence,
     })),
+    skippedRules: failures.length > 0 ? failures : undefined,
     unknownTriage: triage,
   };
 }

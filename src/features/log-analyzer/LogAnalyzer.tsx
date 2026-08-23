@@ -19,6 +19,7 @@ import {
 import { extractLogInfo, isLogEmpty } from "@/lib/log-parser/parser";
 import { analyzeLog } from "@/lib/rules/engine";
 import { scopeMatches, toLogRules } from "@/lib/rules/custom";
+import { apiFetch, errorMessage } from "@/lib/api/client";
 import type { CustomRule, LogParseResult, Severity } from "@/types";
 
 /** Shape of the enriched server analysis (rule engine + AI fallback). */
@@ -245,7 +246,7 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
     const controller = new AbortController();
     aiAbortRef.current = controller;
     try {
-      const res = await fetch("/api/tools/analyze", {
+      const res = await apiFetch("/api/tools/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ logs: [text], system }),
@@ -254,11 +255,11 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
       const json = (await res.json()) as {
         ok?: boolean;
         data?: ServerAnalyzeData;
-        error?: string;
+        error?: unknown;
       };
       if (runId !== aiRunRef.current) return;
       if (!res.ok || !json?.ok || !json.data) {
-        setAiError(json?.error ?? "AI 補充分析失敗。");
+        setAiError(errorMessage(json, "AI 補充分析失敗。"));
         return;
       }
       setAiConfigured(json.data.aiFallbackConfigured ?? false);
@@ -298,7 +299,7 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
   // same company/system rules as the agent API (scope applied per analysis).
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/tools/rules")
+    apiFetch("/api/tools/rules")
       .then((res) => res.json())
       .then((json: { ok?: boolean; data?: { rules?: CustomRule[] } }) => {
         if (cancelled || !json?.ok || !json.data) return;

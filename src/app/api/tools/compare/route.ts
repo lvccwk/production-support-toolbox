@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { ToolError } from "@/lib/errors";
 import { compareLogs } from "@/lib/log-comparison/comparator";
-import { toolErrorResponse, toolOk } from "../_helpers";
+import { withApi } from "@/lib/api/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * Body: { "before": "...", "after": "..." }
  */
 export async function POST(request: NextRequest) {
-  try {
+  return withApi(request, { route: "/api/tools/compare" }, async () => {
     const raw = (await request.json()) as { before?: unknown; after?: unknown };
     if (typeof raw.before !== "string" || !raw.before.trim()) {
       throw new ToolError("Please provide the 'before' log.");
@@ -19,8 +19,6 @@ export async function POST(request: NextRequest) {
     if (typeof raw.after !== "string" || !raw.after.trim()) {
       throw new ToolError("Please provide the 'after' log.");
     }
-    return toolOk(compareLogs(raw.before, raw.after));
-  } catch (error) {
-    return toolErrorResponse(error);
-  }
+    return compareLogs(raw.before, raw.after);
+  });
 }

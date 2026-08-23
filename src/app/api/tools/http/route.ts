@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { searchHttpStatus } from "@/lib/http/statusCatalog";
-import { toolOk } from "../_helpers";
+import { withApi } from "@/lib/api/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +10,9 @@ export const dynamic = "force-dynamic";
  * Body: { "query": "503 | gateway timeout | 4xx (optional; empty = all)" }
  */
 export async function POST(request: NextRequest) {
-  const raw = (await request.json().catch(() => ({}))) as { query?: unknown };
-  const query = typeof raw.query === "string" ? raw.query : "";
-  return toolOk({ entries: searchHttpStatus(query) });
+  return withApi(request, { route: "/api/tools/http" }, async () => {
+    const raw = (await request.json().catch(() => ({}))) as { query?: unknown };
+    const query = typeof raw.query === "string" ? raw.query : "";
+    return { entries: searchHttpStatus(query) };
+  });
 }

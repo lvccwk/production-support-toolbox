@@ -21,10 +21,18 @@ npm run dev
 Open http://localhost:3000. The application works fully offline after
 installation.
 
+> ## ⚠️ Deployment warning
+>
+> This is an **internal MVP for personal / small-team localhost use**. The
+> dev/start commands bind to **127.0.0.1 (loopback only)** and the data APIs
+> are **unauthenticated by default** — **do NOT expose the service to your
+> LAN or the Internet without enabling remote access** (see
+> [Remote mode & API access control](#remote-mode--api-access-control)).
+
 ## Testing
 
 ```bash
-npm test          # vitest: unit tests for parsers, rules and tool logic
+npm test          # vitest: unit + integration + security + performance tests
 npm run lint      # ESLint (eslint-config-next)
 npm run typecheck # tsc --noEmit
 ```
@@ -53,8 +61,56 @@ datasets (e.g. Hadoop / HDFS_v1) fit the engine's design much better.
 
 ```bash
 npm run build     # production build (Turbopack)
-npm run start     # serve the production build
+npm run start     # serve the production build (bound to 127.0.0.1)
 ```
+
+## Remote mode & API access control
+
+The service is **loopback-only by default** (`next dev` / `next start` bind
+`127.0.0.1` explicitly). If you genuinely need LAN/team access, opt in
+deliberately — remote mode is **fail-closed**:
+
+```bash
+# 1. Generate high-entropy tokens (at least 16 chars)
+#    e.g. openssl rand -hex 32   -> 64 chars, ideal
+export PST_API_TOKEN="<admin token>"      # full access
+export PST_API_TOKEN_WRITE="<write token>" # read + write, no delete/import/export
+export PST_API_TOKEN_READ="<read token>"   # read-only
+
+# 2. Start with the :remote script (refuses to start without credentials!)
+PST_REMOTE_ACCESS=true npm run dev:remote     # binds 0.0.0.0
+PST_REMOTE_ACCESS=true npm run start:remote   # production build, binds 0.0.0.0
+```
+
+Rules:
+
+- `Authorization: Bearer <token>` only — query-string tokens are rejected.
+- Scopes: **read < write < admin**. `read` = list/get on incidents, history,
+  rules; `write` = create/update; `admin` = delete, import/export and the
+  rules import endpoint. A token grants its scope and everything below it.
+- Without any credential, remote mode returns `503` on every protected
+  endpoint and the `:remote` scripts refuse to start (fail closed).
+- Browser-originated writes are CSRF-checked: a cross-origin `Origin` header
+  must match the request host or `PST_ALLOWED_DEV_ORIGINS`, otherwise `403`.
+  Agents (no `Origin` header) only need the bearer token.
+- Tokens live in environment variables only: they never appear in responses,
+  logs, history, exports or the database.
+- The GUI has a Settings field to store a token in the browser's
+  `localStorage`; every request goes through `apiFetch`, which attaches
+  `Authorization: Bearer` automatically.
+- For a real multi-user deployment prefer a **reverse proxy + OIDC** instead
+  of extending this built-in token model.
+
+| Env var | Effect |
+| --- | --- |
+| `PST_REMOTE_ACCESS=true` + `PST_API_TOKEN` | enable remote mode (binds 0.0.0.0) with admin token |
+| `PST_API_TOKEN_WRITE` / `PST_API_TOKEN_READ` | scoped tokens (optional extra) |
+| `PST_ALLOWED_DEV_ORIGINS` | comma-separated origins for dev resources / CSRF allow-list |
+| `PST_MAX_CUSTOM_RULES` | active custom-rule cap (default 200) |
+| `PST_BACKUP_RETENTION` | days of `backups-*.json` to keep (default 30) |
+| `PST_AUTO_BACKUP=off` | disable the daily auto-backup |
+| `PST_DATA_DIR` | SQLite file location override |
+| `PST_AI_FALLBACK=true` + `OPENROUTER_API_KEY` | opt-in AI fallback (see Privacy model) |
 
 ---
 
@@ -72,7 +128,7 @@ npm run start     # serve the production build
 | **Cron Helper** | 5-field cron → human description (e.g. `0 8 * * *` → “Runs every day at 08:00.”) and the next 5 execution times. Supports `*`, lists, ranges, steps, month/weekday names, and the standard day-of-month/day-of-week rule. |
 | **Incident Notes** | Incident records (title, system, environment, severity, detected time, symptoms, root cause, immediate fix, permanent fix, status, notes) stored in SQLite. Search, edit, delete. |
 | **Support History** | Explicitly saved analyses (date, tool, system, summary, severity). Search, delete, **re-open** (the original inputs are restored in the tool). Nothing is stored automatically. |
-| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); the JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. |
+| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. The JSON backup is schema v2 and covers **incidents + history + custom rules**; imports are all-or-nothing (any invalid entry rolls the whole bundle back, duplicates skipped). CSVs are **spreadsheet-safe** (formula-injection prefixes `= + - @` neutralized). History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); the JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. |
 
 Every tool follows the same pattern: **Input → Action buttons → Result →
 Copy → Clear**, with large monospace text areas, dark mode, and desktop-first
@@ -99,6 +155,10 @@ responsive layout. The **exact same logic** is exposed to agents via the
 - `/api/tools/analyze` masks sensitive values (`password`, `token`,
   `authorization`, `api_key`, `client_secret`, …) in its response by default
   (`PST_REDACT=off` disables).
+- API requests emit **structured metadata logs** to stdout (one JSON line per
+  request: `requestId`, route, duration, status, error class). They never
+  include log content, request payloads, Authorization headers, API keys,
+  PII, or full SQLite errors.
 - Before saving an analysis, the app scans for common sensitive keywords and
   shows a warning; it never sanitises automatically — review content yourself
   before saving.
@@ -164,8 +224,22 @@ Data endpoints are also agent-callable: `/api/incidents` (CRUD),
 `/api/history` (search with `?q=`), `/api/export`, `/api/import`.
 
 - Every `/api/tools/*` call is **pure local + deterministic + free**: fixed
-  JSON contract, `{ ok: true, data }` on success, `{ ok: false, error }` with
-  a sensible message otherwise. No authentication, no telemetry, no AI.
+  JSON contract, `{ ok: true, data }` on success, `{ ok: false, error, message }`
+  on failure. Errors carry a stable structured body:
+  `{ code, message, requestId }` with codes `VALIDATION_ERROR` (400),
+  `UNAUTHENTICATED` (401), `FORBIDDEN` (403), `NOT_FOUND` (404),
+  `PAYLOAD_TOO_LARGE` (413), `SERVICE_UNAVAILABLE` (503), `INTERNAL_ERROR`
+  (500). Internal exceptions are never echoed — the client always gets a
+  generic `INTERNAL_ERROR` plus a `requestId` you can correlate in the
+  server log (structured `{"pst":true,...}` JSON lines: requestId, route,
+  duration, status, error class — never payloads, headers or credentials).
+- **Authentication:** local (loopback) mode requires none. When
+  `PST_REMOTE_ACCESS=true` (or any token is configured) every data route
+  requires `Authorization: Bearer <token>` with the matching scope
+  (read/write/admin — see "Remote mode & API access control"). The pure
+  stateless tools (`compare`, `json`, `sql`, `timestamp`, `http`, `encoding`,
+  `cron`, and the `GET /api/tools` manifest) stay open; `analyze`, `rules*`,
+  incidents/history/import/export are protected.
 - `GET /api/tools` returns the manifest so an agent can self-serve without
   reading this README.
 - Both surfaces (GUI + API) share the same tested logic under `src/lib/`.
@@ -194,9 +268,21 @@ curl -X DELETE http://localhost:3000/api/tools/rules/1
 - **Scope** = `global` | `systems` (match the `system` hint) | `components`
   (match component names detected in the log) — so rules for one system never
   fire on another's logs.
-- Patterns are **regex-validated at registration** (invalid regex → 400) and
-  capped (≤20 patterns/rule, ≤300 chars/pattern, ≤200 active rules total,
-  `PST_MAX_CUSTOM_RULES` override).
+- Patterns are validated at registration with **three layers**:
+  1. **Syntax** — invalid regex → 400.
+  2. **Static ReDoS screening** — `(a+)+`-style nested quantifiers, quantified
+     alternations whose branches share a first character, and
+     backreferences (`\1`, `\k<name>`) are rejected with an actionable
+     message. Bounded constructs stay compatible (e.g. `\d{4}-\d{2}-\d{2}`,
+     `(\d{1,3}\.){3}`, `(GET|POST|PUT)`).
+  3. **Time-bounded torture test** — every pattern (registration, update AND
+     import) runs inside a worker thread against a set of adversarial inputs
+     with a hard budget; any pattern that does not finish is rejected, so a
+     stored pattern is empirically proven not to hang an analysis request.
+     Runtime pattern failures are also caught by the engine (the rule is
+     skipped and reported via `skippedRules`, never a crash).
+- Caps: ≤20 patterns/rule, ≤300 chars/pattern, ≤200 active rules total
+  (`PST_MAX_CUSTOM_RULES` override), ≤500 rules/import bundle.
 - Custom rules are merged into `/api/tools/analyze` (and its `summary`);
   matched custom rules are listed in `appliedCustomRules` and prevent the
   Unknown-Error triage. Rules can be exported/imported between machines via
@@ -254,8 +340,13 @@ components stay thin.
 - WAL mode is enabled for reliable local writes.
 - Override the location with the environment variable `PST_DATA_DIR`
   (used by tests and advanced setups).
-- The tables are `incidents` and `history`; the schema is created
-  automatically at startup (`src/lib/database/db.ts`).
+- The tables are `incidents`, `history`, `custom_rules` and `analysis_cache`
+  (a disposable AI-fallback cache that is intentionally NOT backed up); the
+  schema is created automatically at startup (`src/lib/database/db.ts`).
+- **Backups:** `<data dir>/backups/backups-YYYY-MM-DD.json`, written at most
+  once per day (same canonical serializer as the manual export), atomically
+  replaced (temp file + rename, so an interrupted write never corrupts the
+  last good backup), pruned to `PST_BACKUP_RETENTION` days (default 30).
 
 ## Development notes
 
@@ -264,13 +355,14 @@ components stay thin.
 - `better-sqlite3` is a native module and is excluded from the bundler via
   `serverExternalPackages` in `next.config.ts`; API routes run on the Node
   runtime and are marked `force-dynamic`.
-- **Accessing from another machine on the LAN** (e.g.
-  `http://192.168.1.231:3000`): Next.js 16 blocks cross-origin dev resources
-  by default; `next.config.ts` already allows hosts on the `192.168.1.*`
-  subnet. If your subnet differs (or changes), override the list without
-  touching code:
+- **Accessing from another machine on the LAN**: the server binds
+  `127.0.0.1` by default. Use `PST_REMOTE_ACCESS=true npm run dev:remote`
+  (requires `PST_API_TOKEN*`, see "Remote mode & API access control").
+  Next.js 16 blocks cross-origin dev resources by default; `next.config.ts`
+  allows hosts on the `192.168.1.*` subnet, and you can override the list
+  without touching code:
   ```bash
-  PST_ALLOWED_DEV_ORIGINS="192.168.*.*,10.0.*.*" npm run dev
+  PST_ALLOWED_DEV_ORIGINS="192.168.*.*,10.0.*.*" npm run dev:remote
   ```
   (wildcards match one dot-separated label; `**` matches the rest).
 - Dark mode uses a class on `<html>` (`pst-theme` in `localStorage`,

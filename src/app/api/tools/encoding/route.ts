@@ -7,7 +7,7 @@ import {
   urlEncode,
   urlEncodePath,
 } from "@/lib/encoding/tools";
-import { toolErrorResponse, toolOk } from "../_helpers";
+import { withApi } from "@/lib/api/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,28 +17,26 @@ export const dynamic = "force-dynamic";
  * Body: { "input": "...", "action": "base64-encode|base64-decode|url-encode|url-decode|url-encode-path" }
  */
 export async function POST(request: NextRequest) {
-  try {
+  return withApi(request, { route: "/api/tools/encoding" }, async () => {
     const raw = (await request.json()) as { input?: unknown; action?: unknown };
     if (typeof raw.input !== "string" || !raw.input.trim()) {
       throw new ToolError("Please provide input text.");
     }
     switch (raw.action) {
       case "base64-encode":
-        return toolOk({ output: base64Encode(raw.input) });
+        return { output: base64Encode(raw.input) };
       case "base64-decode":
-        return toolOk({ output: base64Decode(raw.input) });
+        return { output: base64Decode(raw.input) };
       case "url-encode":
-        return toolOk({ output: urlEncode(raw.input) });
+        return { output: urlEncode(raw.input) };
       case "url-decode":
-        return toolOk({ output: urlDecode(raw.input) });
+        return { output: urlDecode(raw.input) };
       case "url-encode-path":
-        return toolOk({ output: urlEncodePath(raw.input) });
+        return { output: urlEncodePath(raw.input) };
       default:
         throw new ToolError(
           "Unknown action. Use base64-encode, base64-decode, url-encode, url-decode or url-encode-path.",
         );
     }
-  } catch (error) {
-    return toolErrorResponse(error);
-  }
+  });
 }

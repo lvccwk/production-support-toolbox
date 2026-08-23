@@ -1,35 +1,47 @@
-import type { HistoryEntry, Incident, IncidentInput, HistoryInput, Severity, UnknownTriage } from "@/types";
+import type {
+  HistoryEntry,
+  HistoryInput,
+  Incident,
+  IncidentInput,
+  CustomRule,
+  CustomRuleInput,
+  Severity,
+  UnknownTriage,
+} from "@/types";
 import { ToolError } from "@/lib/errors";
 import { getDb } from "./db";
 import { BACKUP_SCHEMA_VERSION } from "./backup";
+import { readSnapshotRows } from "./snapshot";
+import { importCustomRulesInTransaction } from "./customRules";
 import { extractLogInfo } from "@/lib/log-parser/parser";
 import { detectSensitiveData } from "@/lib/sensitive/detector";
-import {
-  createIncident,
-  listIncidents,
-  validateIncidentInput,
-} from "./incidents";
-import {
-  createHistoryEntry,
-  listHistory,
-  validateHistoryInput,
-} from "./history";
+import { createIncident, validateIncidentInput } from "./incidents";
+import { createHistoryEntry, validateHistoryInput } from "./history";
 
 /**
- * Export / import for incidents and support history (Phase 2).
+ * Export / import for incidents, support history and custom rules
+ * (Engineering Review §6).
  *
- * Exports are full snapshots as JSON (schema-versioned) or per-kind CSV.
- * Imports restore the data with duplicate protection:
+ * Exports are full snapshots as JSON (schema-versioned, v2 = incidents +
+ * history + customRules) or per-kind CSV. The daily auto-backup and the
+ * manual JSON export BOTH go through the canonical mappers (snapshot.ts), so
+ * the two artifacts can never drift apart. Imports restore with duplicate
+ * protection and are all-or-nothing (single transaction):
  *   - history entries dedupe on (tool + created_at + payload) hash,
  *   - incidents dedupe on a content hash of all user-editable fields
- *     (ids are NOT used — they are not stable across machines).
+ *     (ids are NOT used — they are not stable across machines),
+ *   - custom rules dedupe on (scope + name + patterns) signature.
  */
+
+/** Old schema-v1 backup shape: no customRules (still importable). */
+export type BackupSchemaVersion = 1 | 2;
 
 export interface BackupBundle {
   schemaVersion: number;
   exportedAt: string;
   incidents: Incident[];
   history: HistoryExportEntry[];
+  customRules: CustomRule[];
 }
 
 /** One bilingual (zh/en aligned) analysis bullet — CSV cells and JSON both. */
@@ -72,18 +84,27 @@ export type HistoryExportEntry = HistoryEntry & {
 export interface ImportResult {
   importedIncidents: number;
   importedHistory: number;
+  importedRules: number;
   skipped: number;
+  skippedRules: number;
 }
 
+/**
+ * Full snapshot of every user table. History rows are enriched with a parsed
+ * `analysis` object (additive — the canonical fields stay identical to the
+ * daily auto-backup so restores are compatible with either artifact).
+ */
 export function exportAllData(): BackupBundle {
+  const { incidents, history, customRules } = readSnapshotRows(getDb());
   return {
     schemaVersion: BACKUP_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
-    incidents: listIncidents(),
-    history: listHistory().map((entry) => ({
+    incidents,
+    history: history.map((entry) => ({
       ...entry,
       analysis: parseHistoryAnalysis(entry),
     })),
+    customRules,
   };
 }
 
@@ -164,8 +185,10 @@ function loadExistingHashes(): ExistingHashes {
 }
 
 /**
- * Import a backup JSON bundle. Entries already present (by dedupe hash) are
- * skipped; invalid entries abort the whole import (all-or-nothing).
+ * Import a backup JSON bundle (schema v1 or v2) — all-or-nothing across
+ * incidents, history AND custom rules. Entries already present (by dedupe
+ * key) are skipped; ANY invalid entry or capacity violation rolls the whole
+ * bundle back.
  */
 export function importBundleJson(json: string): ImportResult {
   let parsed: unknown;
@@ -178,9 +201,9 @@ export function importBundleJson(json: string): ImportResult {
     throw new ToolError("Invalid backup format.");
   }
   const bundle = parsed as Partial<BackupBundle>;
-  if (bundle.schemaVersion !== BACKUP_SCHEMA_VERSION) {
+  if (bundle.schemaVersion !== 1 && bundle.schemaVersion !== 2) {
     throw new ToolError(
-      `Unsupported backup schema version: ${String(bundle.schemaVersion)} (expected ${BACKUP_SCHEMA_VERSION}).`,
+      `Unsupported backup schema version: ${String(bundle.schemaVersion)} (expected 1 or 2).`,
     );
   }
   if (!Array.isArray(bundle.incidents) || !Array.isArray(bundle.history)) {
@@ -189,6 +212,7 @@ export function importBundleJson(json: string): ImportResult {
   // Capture outside the transaction closure so type narrowing survives.
   const bundledIncidents = bundle.incidents;
   const bundledHistory = bundle.history;
+  const bundledRules = Array.isArray(bundle.customRules) ? bundle.customRules : [];
 
   const db = getDb();
   return db.transaction(() => {
@@ -223,16 +247,45 @@ export function importBundleJson(json: string): ImportResult {
       importedHistory += 1;
     }
 
-    return { importedIncidents, importedHistory, skipped };
+    const rulesResult = importCustomRulesInTransaction(
+      db,
+      bundledRules as CustomRuleInput[],
+    );
+
+    return {
+      importedIncidents,
+      importedHistory,
+      importedRules: rulesResult.imported,
+      skipped,
+      skippedRules: rulesResult.skipped,
+    };
   })();
 }
 
 // ---------------------------------------------------------------------------
 // CSV export (flat, Excel-friendly: BOM prefix, CRLF rows, quoted fields).
+// Spreadsheet-safe: formula injection prefixes are neutralized (see below).
 // ---------------------------------------------------------------------------
 
+/**
+ * Spreadsheet formula injection sanitizer (Engineering Review §7).
+ *
+ * Excel / LibreOffice treat a cell as a formula when its content starts with
+ * `=`, `+`, `-` or `@` — possibly hidden behind leading whitespace, tabs or
+ * control characters. Prefixing such cells with `'` forces them to be shown
+ * as literal text. Everything else passes through untouched, so quotes,
+ * commas, Unicode, multiline fields and numeric/controlled-enum columns
+ * round-trip exactly as before.
+ */
+const FORMULA_TRIGGER = /^[\s\u0000-\u001f]*[=+\-@]/;
+
+function csvSafeCell(value: unknown): string {
+  const text = String(value ?? "");
+  return FORMULA_TRIGGER.test(text) ? `'${text}` : text;
+}
+
 function csvEscape(value: unknown): string {
-  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+  return `"${csvSafeCell(value).replace(/"/g, '""')}"`;
 }
 
 export function incidentsToCsv(incidents: Incident[]): string {

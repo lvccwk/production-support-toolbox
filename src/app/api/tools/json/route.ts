@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { ToolError } from "@/lib/errors";
 import { formatJson, minifyJson, searchJson, validateJson } from "@/lib/json/jsonTools";
-import { toolErrorResponse, toolOk } from "../_helpers";
+import { withApi } from "@/lib/api/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * Body: { "input": "...", "action": "format|validate|minify|search", "query": "?" }
  */
 export async function POST(request: NextRequest) {
-  try {
+  return withApi(request, { route: "/api/tools/json" }, async () => {
     const raw = (await request.json()) as {
       input?: unknown;
       action?: unknown;
@@ -23,21 +23,17 @@ export async function POST(request: NextRequest) {
     const action = raw.action;
     switch (action) {
       case "format":
-        return toolOk({ output: formatJson(raw.input) });
+        return { output: formatJson(raw.input) };
       case "minify":
-        return toolOk({ output: minifyJson(raw.input) });
+        return { output: minifyJson(raw.input) };
       case "validate":
-        return toolOk(validateJson(raw.input));
+        return validateJson(raw.input);
       case "search": {
         const query = typeof raw.query === "string" ? raw.query : "";
-        return toolOk({ hits: searchJson(raw.input, query) });
+        return { hits: searchJson(raw.input, query) };
       }
       default:
-        throw new ToolError(
-          "Unknown action. Use format, validate, minify or search.",
-        );
+        throw new ToolError("Unknown action. Use format, validate, minify or search.");
     }
-  } catch (error) {
-    return toolErrorResponse(error);
-  }
+  });
 }

@@ -9,6 +9,7 @@ import {
   SeverityBadge,
 } from "@/components/ui";
 import { TransferButtons } from "@/components/TransferButtons";
+import { apiFetch, errorMessage } from "@/lib/api/client";
 import type { HistoryEntry } from "@/types";
 
 const TOOL_NAMES: Record<string, string> = {
@@ -24,7 +25,8 @@ const TOOL_NAMES: Record<string, string> = {
 
 async function readJson<T>(res: Response): Promise<{ ok: boolean; data?: T; error?: string }> {
   try {
-    return (await res.json()) as { ok: boolean; data?: T; error?: string };
+    const json = (await res.json()) as { ok: boolean; data?: T; error?: unknown };
+    return { ok: json.ok, data: json.data, error: errorMessage(json) };
   } catch {
     return { ok: false, error: "Unexpected server response." };
   }
@@ -54,7 +56,7 @@ export function SupportHistory() {
   const refresh = useCallback(async (search?: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/history${search ? `?q=${encodeURIComponent(search)}` : ""}`);
+      const res = await apiFetch(`/api/history${search ? `?q=${encodeURIComponent(search)}` : ""}`);
       const json = await readJson<HistoryEntry[]>(res);
       if (json.ok && json.data) setEntries(json.data);
       else setError(json.error ?? "Failed to load history.");
@@ -71,7 +73,7 @@ export function SupportHistory() {
 
   const remove = async (id: number) => {
     try {
-      const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/history/${id}`, { method: "DELETE" });
       const json = await readJson(res);
       if (!json.ok) {
         setError(json.error ?? "Failed to delete entry.");

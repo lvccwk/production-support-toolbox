@@ -1,55 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   deleteHistoryEntry,
   getHistoryEntry,
 } from "@/lib/database/history";
-import { ToolError } from "@/lib/errors";
+import { withApi } from "@/lib/api/route";
+import { ApiError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function errorResponse(error: unknown, status = 400): NextResponse {
-  const message =
-    error instanceof ToolError
-      ? error.message
-      : error instanceof Error
-        ? error.message
-        : "Unexpected error.";
-  return NextResponse.json({ ok: false, error: message }, { status });
-}
 
 function parseId(value: string): number | null {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+const ROOT = "/api/history/[id]";
+
 /** GET /api/history/[id] — fetch a saved analysis (used by "re-open"). */
-export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  try {
-    const { id: rawId } = await context.params;
-    const id = parseId(rawId);
-    if (id === null) return errorResponse(new ToolError("Invalid id."), 400);
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  return withApi(request, { route: ROOT, scope: "read" }, async () => {
+    const id = parseId((await context.params).id);
+    if (id === null) throw new ApiError("Invalid id.", "VALIDATION_ERROR");
     const entry = getHistoryEntry(id);
-    if (!entry) return errorResponse(new ToolError("History entry not found."), 404);
-    return NextResponse.json({ ok: true, data: entry });
-  } catch (error) {
-    return errorResponse(error, 500);
-  }
+    if (!entry) throw ApiError.notFound("History entry not found.");
+    return entry;
+  });
 }
 
 /** DELETE /api/history/[id] */
-export async function DELETE(
-  _request: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
-  try {
-    const { id: rawId } = await context.params;
-    const id = parseId(rawId);
-    if (id === null) return errorResponse(new ToolError("Invalid id."), 400);
-    const deleted = deleteHistoryEntry(id);
-    if (!deleted) return errorResponse(new ToolError("History entry not found."), 404);
-    return NextResponse.json({ ok: true, data: { deleted: true } });
-  } catch (error) {
-    return errorResponse(error, 500);
-  }
+export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  return withApi(request, { route: ROOT, scope: "admin" }, async () => {
+    const id = parseId((await context.params).id);
+    if (id === null) throw new ApiError("Invalid id.", "VALIDATION_ERROR");
+    if (!deleteHistoryEntry(id)) throw ApiError.notFound("History entry not found.");
+    return { deleted: true };
+  });
 }

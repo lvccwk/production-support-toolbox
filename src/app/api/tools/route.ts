@@ -96,7 +96,7 @@ const TOOLS = [
     method: "POST + GET + PUT/DELETE",
     path: "/api/tools/rules",
     description:
-      "Scoped custom rule registry: teach the engine your system/company's failure signatures. Each rule has a scope (global | systems | components) so different systems keep separate namespaces. POST to register (regex-validated), GET to list (?scope=, ?system=, ?component=, export=json), PUT/DELETE /api/tools/rules/[id] to update/remove. Custom rules are merged into /api/tools/analyze automatically.",
+      "Scoped custom rule registry: teach the engine your system/company's failure signatures. Each rule has a scope (global | systems | components) so different systems keep separate namespaces. POST to register (regex syntax + static ReDoS screening + time-bounded torture test), GET to list (?scope=, ?system=, ?component=, export=json), PUT/DELETE /api/tools/rules/[id] to update/remove. Custom rules are merged into /api/tools/analyze automatically.",
     input: {
       name: "PaymentBatch-STEP44-timeout",
       scope: { type: "components", values: ["PaymentBatch"] },

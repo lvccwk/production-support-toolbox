@@ -16,6 +16,7 @@ import {
 import { INCIDENT_SEVERITIES, INCIDENT_STATUSES } from "@/types";
 import type { Incident, IncidentInput, IncidentStatus, Severity } from "@/types";
 import { TransferButtons } from "@/components/TransferButtons";
+import { apiFetch, errorMessage } from "@/lib/api/client";
 
 const EMPTY_FORM: IncidentInput = {
   title: "",
@@ -33,7 +34,8 @@ const EMPTY_FORM: IncidentInput = {
 
 async function readJson<T>(res: Response): Promise<{ ok: boolean; data?: T; error?: string }> {
   try {
-    return (await res.json()) as { ok: boolean; data?: T; error?: string };
+    const json = (await res.json()) as { ok: boolean; data?: T; error?: unknown };
+    return { ok: json.ok, data: json.data, error: errorMessage(json) };
   } catch {
     return { ok: false, error: "Unexpected server response." };
   }
@@ -51,7 +53,7 @@ export function IncidentNotes() {
   const refresh = useCallback(async (search?: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/incidents${search ? `?q=${encodeURIComponent(search)}` : ""}`);
+      const res = await apiFetch(`/api/incidents${search ? `?q=${encodeURIComponent(search)}` : ""}`);
       const json = await readJson<Incident[]>(res);
       if (json.ok && json.data) setIncidents(json.data);
       else setError(json.error ?? "Failed to load incidents.");
@@ -79,7 +81,7 @@ export function IncidentNotes() {
     setNotice(null);
     try {
       const url = editingId ? `/api/incidents/${editingId}` : "/api/incidents";
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -118,7 +120,7 @@ export function IncidentNotes() {
 
   const remove = async (id: number) => {
     try {
-      const res = await fetch(`/api/incidents/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/incidents/${id}`, { method: "DELETE" });
       const json = await readJson(res);
       if (!json.ok) {
         setError(json.error ?? "Failed to delete incident.");
