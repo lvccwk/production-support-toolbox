@@ -15,7 +15,7 @@ import { listHistory } from "./history";
 import { createHistoryEntry, validateHistoryInput } from "./history";
 import { listIncidents } from "./incidents";
 import { createIncident, validateIncidentInput } from "./incidents";
-import type { Incident, IncidentInput } from "@/types";
+import type { Incident, IncidentInput, Severity } from "@/types";
 import { ToolError } from "@/lib/errors";
 
 let tempDir: string;
@@ -307,6 +307,228 @@ describe("history CSV derived columns", () => {
     ]);
     expect(csv).toContain('"yes"');
     expect(csv).toContain('password=hunter2'); // preview keeps raw for review
+  });
+});
+
+describe("history analysis columns (rule engine snapshot)", () => {
+  const RULES_PAYLOAD = JSON.stringify({
+    input: "2026-08-21 10:15:22 ERROR OrderApi HTTP 500",
+    system: "OrderApi",
+    analysisSource: "rules",
+    analysis: {
+      severity: "High",
+      errorTypes: ["HTTP Error"],
+      affectedComponents: ["OrderApi"],
+      rootCauses: ["Downstream payment API unavailable"],
+      rootCausesZh: ["下游付款 API 不可用"],
+      immediateInvestigation: ["Check payment API status"],
+      immediateInvestigationZh: ["檢查付款 API 狀態"],
+      suggestedFixes: ["Retry with backoff"],
+      suggestedFixesZh: ["重試並加上退避"],
+      longTermImprovements: ["Add circuit breaker"],
+      longTermImprovementsZh: ["加入斷路器"],
+      matchedRuleIds: ["http-5xx"],
+      unknownTriage: null,
+      matchedEvidence: [],
+    },
+    aiFallback: null,
+  });
+
+  function entry(payload: string, severity: Severity | null = "High", tool = "log-analyzer") {
+    return {
+      id: 1,
+      createdAt: "2026-08-21T10:00:00.000Z",
+      tool,
+      system: "OrderApi",
+      summary: "HTTP 500",
+      severity,
+      payload,
+    };
+  }
+
+  it("breaks the analysis result into CSV columns (bilingual)", () => {
+    const csv = historyToCsv([entry(RULES_PAYLOAD)]);
+    expect(csv).toContain(
+      '"analysisSource","matchedRuleCount","errorTypes","affectedComponents","possibleRootCause","immediateInvestigation","suggestedFixes","longTermImprovements"',
+    );
+    expect(csv).toContain('"rules"');
+    expect(csv).toContain('"1"');
+    expect(csv).toContain('"HTTP Error"');
+    expect(csv).toContain('"OrderApi"');
+    expect(csv).toContain('"下游付款 API 不可用 — Downstream payment API unavailable"');
+    expect(csv).toContain('"1. 檢查付款 API 狀態 — Check payment API status"');
+    expect(csv).toContain('"重試並加上退避 — Retry with backoff"');
+    expect(csv).toContain('"加入斷路器 — Add circuit breaker"');
+    expect(csv).toContain('"High"'); // severity column
+  });
+
+  it("uses the AI fallback result when analysisSource is ai-fallback", () => {
+    const csv = historyToCsv([
+      entry(
+        JSON.stringify({
+          input: "2026-08-21 15:33:07 ERROR GatewayBridge jobId=AX-99122",
+          system: "GatewayBridge",
+          analysisSource: "ai-fallback",
+          analysis: {
+            severity: "Informational",
+            errorTypes: ["Unknown Error"],
+            affectedComponents: ["GatewayBridge"],
+            rootCauses: ["Generic: no known pattern"],
+            rootCausesZh: ["通用：未有已知模式"],
+            immediateInvestigation: ["Generic: check input data"],
+            immediateInvestigationZh: ["[通用] 檢查輸入資料。"],
+            suggestedFixes: ["Generic: search exact error text"],
+            suggestedFixesZh: ["[通用] 搜尋確切錯誤文字"],
+            longTermImprovements: ["Generic: improve logging"],
+            longTermImprovementsZh: ["[通用] 改善日誌"],
+            matchedRuleIds: [],
+            unknownTriage: {
+              languageHint: null,
+              httpDirection: null,
+              causes: ["Generic"],
+              causesZh: ["通用"],
+              investigation: ["Generic: check input data"],
+              investigationZh: ["[通用] 檢查輸入資料。"],
+            },
+            matchedEvidence: [],
+          },
+          aiFallback: {
+            severity: "High",
+            errorTypes: ["ChecksumMismatch", "RetryExhausted"],
+            rootCauses: ["PAY gateway rejected masked checksum"],
+            rootCausesZh: ["PAY 閘道拒絕遮罩檢查碼"],
+            immediateInvestigation: ["Check gateway signature"],
+            immediateInvestigationZh: ["檢查閘道簽章"],
+            suggestedFixes: ["Rotate signature key"],
+            suggestedFixesZh: ["輪換簽章金鑰"],
+            longTermImprovements: ["Add checksum validation monitor"],
+            longTermImprovementsZh: ["加入檢查碼驗證監控"],
+            model: "deepseek/deepseek-v4-flash-0731",
+            confidence: 0.35,
+            cached: false,
+          },
+        }),
+        "High",
+      ),
+    ]);
+    expect(csv).toContain('"ai-fallback"');
+    expect(csv).toContain('"0"'); // matchedRuleCount
+    expect(csv).toContain('"ChecksumMismatch | RetryExhausted"');
+    expect(csv).toContain('"PAY 閘道拒絕遮罩檢查碼 — PAY gateway rejected masked checksum"');
+    expect(csv).toContain('"1. 檢查閘道簽章 — Check gateway signature"');
+    expect(csv).toContain('"輪換簽章金鑰 — Rotate signature key"');
+    expect(csv).toContain('"加入檢查碼驗證監控 — Add checksum validation monitor"');
+    expect(csv).not.toContain('"通用：未有已知模式 — Generic: no known pattern"');
+  });
+
+  it("leaves analysis columns empty for legacy / non-log entries", () => {
+    const csv = historyToCsv([
+      entry(JSON.stringify({ input: "demo log", system: "" }), "High"),
+      entry(JSON.stringify({ input: "10:00:00" }), null, "timestamp"),
+    ]);
+    expect(csv).toContain('"High","","","","","","","",""');
+  });
+});
+
+describe("history analysis in the JSON backup bundle", () => {
+  it("exports a parsed analysis object per log-analyzer entry", () => {
+    createHistoryEntry(
+      validateHistoryInput({
+        tool: "log-analyzer",
+        system: "OrderApi",
+        summary: "HTTP 500",
+        severity: "High",
+        payload: JSON.stringify({
+          input: "2026-08-21 10:15:22 ERROR OrderApi HTTP 500",
+          system: "OrderApi",
+          analysisSource: "rules",
+          analysis: {
+            severity: "High",
+            errorTypes: ["HTTP Error"],
+            affectedComponents: ["OrderApi"],
+            rootCauses: ["Downstream payment API unavailable"],
+            rootCausesZh: ["下游付款 API 不可用"],
+            immediateInvestigation: ["Check payment API status"],
+            immediateInvestigationZh: ["檢查付款 API 狀態"],
+            suggestedFixes: ["Retry with backoff"],
+            suggestedFixesZh: ["重試並加上退避"],
+            longTermImprovements: ["Add circuit breaker"],
+            longTermImprovementsZh: ["加入斷路器"],
+            matchedRuleIds: ["http-5xx"],
+            unknownTriage: null,
+            matchedEvidence: [],
+          },
+          aiFallback: null,
+        }),
+      }),
+      { createdAt: "2026-08-21T10:00:00.000Z" },
+    );
+    const parsed = JSON.parse(bundleToJson(exportAllData())) as {
+      history: Array<{
+        analysis: {
+          source: string;
+          severity: string;
+          matchedRuleCount: number;
+          errorTypes: string[];
+          affectedComponents: string[];
+          possibleRootCause: Array<{ zh: string | null; en: string }>;
+          aiFallback: unknown;
+        };
+      }>;
+    };
+    expect(parsed.history).toHaveLength(1);
+    expect(parsed.history[0]?.analysis.source).toBe("rules");
+    expect(parsed.history[0]?.analysis.severity).toBe("High");
+    expect(parsed.history[0]?.analysis.matchedRuleCount).toBe(1);
+    expect(parsed.history[0]?.analysis.errorTypes).toEqual(["HTTP Error"]);
+    expect(parsed.history[0]?.analysis.possibleRootCause).toEqual([
+      { zh: "下游付款 API 不可用", en: "Downstream payment API unavailable" },
+    ]);
+    expect(parsed.history[0]?.analysis.aiFallback).toBeNull();
+  });
+
+  it("round-trips the enriched bundle through import (schema stays v1)", () => {
+    const payload = JSON.stringify({
+      input: "demo",
+      system: "",
+      analysisSource: "rules",
+      analysis: {
+        severity: "Low",
+        errorTypes: [],
+        affectedComponents: [],
+        rootCauses: ["x"],
+        rootCausesZh: null,
+        immediateInvestigation: ["y"],
+        immediateInvestigationZh: null,
+        suggestedFixes: [],
+        suggestedFixesZh: null,
+        longTermImprovements: [],
+        longTermImprovementsZh: null,
+        matchedRuleIds: [],
+        unknownTriage: null,
+        matchedEvidence: [],
+      },
+      aiFallback: null,
+    });
+    createHistoryEntry(
+      validateHistoryInput({
+        tool: "log-analyzer",
+        system: "",
+        summary: "s",
+        severity: "Low",
+        payload,
+      }),
+      { createdAt: "2026-08-21T10:00:00.000Z" },
+    );
+    const json = bundleToJson(exportAllData());
+    const first = importBundleJson(json);
+    expect(first).toEqual({ importedIncidents: 0, importedHistory: 0, skipped: 1 });
+    // A fresh DB still imports the enriched bundle (analysis field ignored on import).
+    currentDbFile = path.join(tempDir, `enriched-${seq}.db`);
+    initDb(currentDbFile);
+    const restore = importBundleJson(json);
+    expect(restore).toEqual({ importedIncidents: 0, importedHistory: 1, skipped: 0 });
+    expect(listHistory()[0]?.payload).toBe(payload);
   });
 });
 

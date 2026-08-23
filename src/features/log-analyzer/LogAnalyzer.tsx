@@ -19,7 +19,7 @@ import {
 import { extractLogInfo, isLogEmpty } from "@/lib/log-parser/parser";
 import { analyzeLog } from "@/lib/rules/engine";
 import { scopeMatches, toLogRules } from "@/lib/rules/custom";
-import type { CustomRule, LogParseResult } from "@/types";
+import type { CustomRule, LogParseResult, Severity } from "@/types";
 
 /** Shape of the enriched server analysis (rule engine + AI fallback). */
 interface ServerAnalyzeData {
@@ -119,6 +119,90 @@ function buildReport(result: LogParseResult): string {
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * Serialize the FULL analysis (rule engine + optional AI fallback, both
+ * languages) into the Support History payload, so CSV/JSON exports can break
+ * out every field instead of showing only "No known error pattern matched".
+ */
+function buildSavePayload(
+  result: LogParseResult,
+  aiResult: ServerAnalyzeData | null,
+  text: string,
+  system: string,
+): string {
+  const analysis = result.analysis;
+  const ai = aiResult?.analysisSource === "ai-fallback" ? aiResult : null;
+  const base: Record<string, unknown> = {
+    input: text,
+    system,
+    analysisSource: ai ? "ai-fallback" : "rules",
+    analysis: {
+      severity: analysis.severity,
+      errorTypes: analysis.errorTypes,
+      affectedComponents: analysis.affectedComponents,
+      rootCauses: analysis.rootCauses,
+      rootCausesZh: analysis.rootCausesZh ?? null,
+      immediateInvestigation: analysis.immediateInvestigation,
+      immediateInvestigationZh: analysis.immediateInvestigationZh ?? null,
+      suggestedFixes: analysis.suggestedFixes,
+      suggestedFixesZh: analysis.suggestedFixesZh ?? null,
+      longTermImprovements: analysis.longTermImprovements,
+      longTermImprovementsZh: analysis.longTermImprovementsZh ?? null,
+      matchedRuleIds: analysis.matchedRuleIds,
+      unknownTriage: analysis.unknownTriage,
+      matchedEvidence: analysis.matchedEvidence.map((m) => ({
+        ruleId: m.ruleId,
+        ruleName: m.ruleName,
+        evidence: m.evidence.map((e) => ({ line: e.line, text: e.text })),
+      })),
+    },
+  };
+  if (ai) {
+    base.aiFallback = {
+      severity: ai.severity,
+      errorTypes: ai.errorTypes,
+      rootCauses: ai.rootCauses,
+      rootCausesZh: ai.rootCausesZh ?? null,
+      immediateInvestigation: ai.immediateInvestigation,
+      immediateInvestigationZh: ai.immediateInvestigationZh ?? null,
+      suggestedFixes: ai.suggestedFixes,
+      suggestedFixesZh: ai.suggestedFixesZh ?? null,
+      longTermImprovements: ai.longTermImprovements,
+      longTermImprovementsZh: ai.longTermImprovementsZh ?? null,
+      model: ai.aiFallback?.model ?? null,
+      confidence: ai.aiFallback?.confidence ?? null,
+      cached: ai.aiFallback?.cached ?? false,
+    };
+  }
+  const full = JSON.stringify(base);
+  // History rejects payloads over 200k chars — drop the evidence line TEXT
+  // (keep rule refs + line numbers) for huge logs instead of failing the save.
+  if (full.length > 200_000) {
+    base.analysis = {
+      severity: analysis.severity,
+      errorTypes: analysis.errorTypes,
+      affectedComponents: analysis.affectedComponents,
+      rootCauses: analysis.rootCauses,
+      rootCausesZh: analysis.rootCausesZh ?? null,
+      immediateInvestigation: analysis.immediateInvestigation,
+      immediateInvestigationZh: analysis.immediateInvestigationZh ?? null,
+      suggestedFixes: analysis.suggestedFixes,
+      suggestedFixesZh: analysis.suggestedFixesZh ?? null,
+      longTermImprovements: analysis.longTermImprovements,
+      longTermImprovementsZh: analysis.longTermImprovementsZh ?? null,
+      matchedRuleIds: analysis.matchedRuleIds,
+      unknownTriage: analysis.unknownTriage,
+      matchedEvidence: analysis.matchedEvidence.map((m) => ({
+        ruleId: m.ruleId,
+        ruleName: m.ruleName,
+        evidence: m.evidence.map((e) => ({ line: e.line, text: e.text.slice(0, 200) })),
+      })),
+    };
+    return JSON.stringify(base);
+  }
+  return full;
 }
 
 export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
@@ -286,6 +370,12 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
     const component = result.info.components[0] ?? "log";
     return exception ? `${exception} in ${component}` : `${component} analysis`;
   }, [result]);
+
+  // Full analysis snapshot for Support History (rules + AI fallback, bilingual).
+  const savePayload = useMemo(
+    () => (result ? buildSavePayload(result, aiResult, text, system) : ""),
+    [result, aiResult, text, system],
+  );
 
   return (
     <div className="space-y-4">
@@ -842,8 +932,12 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                 tool="log-analyzer"
                 system={system}
                 summary={summary}
-                severity={result.analysis.severity}
-                payload={JSON.stringify({ input: text, system })}
+                severity={
+                  aiResult?.analysisSource === "ai-fallback"
+                    ? (aiResult.severity as Severity)
+                    : result.analysis.severity
+                }
+                payload={savePayload}
                 sensitiveText={text}
               />
             </div>

@@ -72,7 +72,7 @@ npm run start     # serve the production build
 | **Cron Helper** | 5-field cron → human description (e.g. `0 8 * * *` → “Runs every day at 08:00.”) and the next 5 execution times. Supports `*`, lists, ranges, steps, month/weekday names, and the standard day-of-month/day-of-week rule. |
 | **Incident Notes** | Incident records (title, system, environment, severity, detected time, symptoms, root cause, immediate fix, permanent fix, status, notes) stored in SQLite. Search, edit, delete. |
 | **Support History** | Explicitly saved analyses (date, tool, system, summary, severity). Search, delete, **re-open** (the original inputs are restored in the tool). Nothing is stored automatically. |
-| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. History CSV includes derived columns (`inputChars`, `inputPreview`, tool `detail`, `sensitive`) so you don't have to open every JSON payload. |
+| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); the JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. |
 
 Every tool follows the same pattern: **Input → Action buttons → Result →
 Copy → Clear**, with large monospace text areas, dark mode, and desktop-first

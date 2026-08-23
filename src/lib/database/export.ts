@@ -1,4 +1,4 @@
-import type { HistoryEntry, Incident, IncidentInput, HistoryInput } from "@/types";
+import type { HistoryEntry, Incident, IncidentInput, HistoryInput, Severity, UnknownTriage } from "@/types";
 import { ToolError } from "@/lib/errors";
 import { getDb } from "./db";
 import { BACKUP_SCHEMA_VERSION } from "./backup";
@@ -29,8 +29,45 @@ export interface BackupBundle {
   schemaVersion: number;
   exportedAt: string;
   incidents: Incident[];
-  history: HistoryEntry[];
+  history: HistoryExportEntry[];
 }
+
+/** One bilingual (zh/en aligned) analysis bullet — CSV cells and JSON both. */
+export interface AnalysisPair {
+  zh: string | null;
+  en: string;
+}
+
+/**
+ * Structured analysis of a log-analyzer history entry, parsed OUT of the
+ * stored payload so exports can break the analysis result into fields
+ * (severity, matched rule count, error types, root cause, investigation,
+ * suggested fix, long-term improvement) without parsing payload JSON by hand.
+ * The AI fallback (when analysisSource was "ai-fallback") takes precedence.
+ */
+export interface ParsedHistoryAnalysis {
+  source: "rules" | "ai-fallback" | null;
+  severity: Severity | null;
+  matchedRuleCount: number | null;
+  errorTypes: string[];
+  affectedComponents: string[];
+  possibleRootCause: AnalysisPair[];
+  immediateInvestigation: AnalysisPair[];
+  suggestedFixes: AnalysisPair[];
+  longTermImprovements: AnalysisPair[];
+  unknownTriage: UnknownTriage | null;
+  aiFallback: {
+    severity: Severity | null;
+    model: string | null;
+    confidence: number | null;
+    cached: boolean | null;
+  } | null;
+}
+
+/** History entry as exported to JSON: analysis available at its own field. */
+export type HistoryExportEntry = HistoryEntry & {
+  analysis: ParsedHistoryAnalysis | null;
+};
 
 export interface ImportResult {
   importedIncidents: number;
@@ -43,7 +80,10 @@ export function exportAllData(): BackupBundle {
     schemaVersion: BACKUP_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     incidents: listIncidents(),
-    history: listHistory(),
+    history: listHistory().map((entry) => ({
+      ...entry,
+      analysis: parseHistoryAnalysis(entry),
+    })),
   };
 }
 
@@ -216,12 +256,22 @@ export function incidentsToCsv(incidents: Incident[]): string {
 /**
  * Derived metadata for one history entry — pulls useful info out of the
  * stored payload so CSV exports don't force you to open every JSON payload.
+ * Analysis columns (analysisSource … longTermImprovements) are empty for
+ * non-log tools and for entries saved before the analysis snapshot existed.
  */
 export interface HistoryCsvMeta {
   inputPreview: string;
   inputChars: number;
   detail: string;
   sensitive: string; // "yes" | ""
+  analysisSource: string;
+  matchedRuleCount: string;
+  errorTypes: string;
+  affectedComponents: string;
+  possibleRootCause: string;
+  immediateInvestigation: string;
+  suggestedFixes: string;
+  longTermImprovements: string;
 }
 
 function safePayload(entry: HistoryEntry): Record<string, unknown> {
@@ -237,6 +287,96 @@ function safePayload(entry: HistoryEntry): Record<string, unknown> {
 
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+const SEVERITIES: Severity[] = ["Critical", "High", "Medium", "Low", "Informational"];
+
+function isSeverity(value: unknown): value is Severity {
+  return typeof value === "string" && (SEVERITIES as string[]).includes(value);
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Zip the stored zh/en arrays into aligned pairs (en is the source of truth). */
+function analysisPairs(zh: unknown, en: unknown): AnalysisPair[] {
+  const enList = asStringArray(en);
+  const zhList = asStringArray(zh);
+  return enList.map((text, i) => ({ zh: zhList[i] ?? null, en: text }));
+}
+
+/** Render pairs into a single CSV cell, e.g. "zh — en | zh2 — en2". */
+function pairsToCell(pairs: AnalysisPair[], numbered = false): string {
+  return pairs
+    .map((p, i) => {
+      const prefix = numbered ? `${i + 1}. ` : "";
+      return p.zh !== null && p.zh !== p.en ? `${prefix}${p.zh} — ${p.en}` : `${prefix}${p.en}`;
+    })
+    .join(" | ");
+}
+
+/**
+ * Parse the analysis stored by the Log Analyzer GUI (or an agent) out of the
+ * payload. Returns null for non-log tools, legacy entries and unreadable
+ * payloads. When analysisSource === "ai-fallback" the AI result wins for the
+ * analysis fields; component/rule info still comes from the rule engine.
+ */
+export function parseHistoryAnalysis(entry: HistoryEntry): ParsedHistoryAnalysis | null {
+  const payload = safePayload(entry);
+  const analysis = asObject(payload.analysis);
+  if (!analysis) return null;
+  const ai = payload.analysisSource === "ai-fallback" ? asObject(payload.aiFallback) : null;
+
+  const errorTypes = asStringArray(ai ? ai.errorTypes : analysis.errorTypes);
+  const source: "rules" | "ai-fallback" | null = ai ? "ai-fallback" : "rules";
+  const ruleSeverity = isSeverity(analysis.severity) ? analysis.severity : null;
+  const aiSeverity = ai && isSeverity(ai.severity) ? ai.severity : null;
+
+  return {
+    source,
+    severity: aiSeverity ?? ruleSeverity,
+    matchedRuleCount: Array.isArray(analysis.matchedRuleIds)
+      ? analysis.matchedRuleIds.length
+      : null,
+    errorTypes,
+    affectedComponents: asStringArray(analysis.affectedComponents),
+    possibleRootCause: analysisPairs(
+      ai ? ai.rootCausesZh : analysis.rootCausesZh,
+      ai ? ai.rootCauses : analysis.rootCauses,
+    ),
+    immediateInvestigation: analysisPairs(
+      ai ? ai.immediateInvestigationZh : analysis.immediateInvestigationZh,
+      ai ? ai.immediateInvestigation : analysis.immediateInvestigation,
+    ),
+    suggestedFixes: analysisPairs(
+      ai ? ai.suggestedFixesZh : analysis.suggestedFixesZh,
+      ai ? ai.suggestedFixes : analysis.suggestedFixes,
+    ),
+    longTermImprovements: analysisPairs(
+      ai ? ai.longTermImprovementsZh : analysis.longTermImprovementsZh,
+      ai ? ai.longTermImprovements : analysis.longTermImprovements,
+    ),
+    unknownTriage: (asObject(analysis.unknownTriage) as UnknownTriage | null) ?? null,
+    aiFallback: ai
+      ? {
+          severity: aiSeverity,
+          model: str(ai.model) || null,
+          confidence: asNumber(ai.confidence),
+          cached: typeof ai.cached === "boolean" ? ai.cached : null,
+        }
+      : null,
+  };
 }
 
 /** Extract structured info for the log-* tools using the parser. */
@@ -285,24 +425,39 @@ export function historyCsvMeta(entry: HistoryEntry): HistoryCsvMeta {
 
   const sensitive = detectSensitiveData(entry.payload).found ? "yes" : "";
 
+  const analysis = parseHistoryAnalysis(entry);
+
   return {
     inputPreview: input.replace(/\s+/g, " ").slice(0, 200),
     inputChars: input.length,
     detail,
     sensitive,
+    analysisSource: analysis?.source ?? "",
+    matchedRuleCount: analysis?.matchedRuleCount != null ? String(analysis.matchedRuleCount) : "",
+    errorTypes: analysis ? analysis.errorTypes.join(" | ") : "",
+    affectedComponents: analysis ? analysis.affectedComponents.join(" | ") : "",
+    possibleRootCause: analysis ? pairsToCell(analysis.possibleRootCause) : "",
+    immediateInvestigation: analysis ? pairsToCell(analysis.immediateInvestigation, true) : "",
+    suggestedFixes: analysis ? pairsToCell(analysis.suggestedFixes) : "",
+    longTermImprovements: analysis ? pairsToCell(analysis.longTermImprovements) : "",
   };
 }
 
 export function historyToCsv(entries: HistoryEntry[]): string {
   const header = [
     "id", "createdAt", "tool", "system", "summary", "severity",
-    "inputChars", "inputPreview", "detail", "sensitive",
+    "analysisSource", "matchedRuleCount", "errorTypes", "affectedComponents",
+    "possibleRootCause", "immediateInvestigation", "suggestedFixes",
+    "longTermImprovements", "inputChars", "inputPreview", "detail", "sensitive",
     "payload",
   ];
   const rows = entries.map((e) => {
     const meta = historyCsvMeta(e);
     return [
       e.id, e.createdAt, e.tool, e.system, e.summary, e.severity ?? "",
+      meta.analysisSource, meta.matchedRuleCount, meta.errorTypes,
+      meta.affectedComponents, meta.possibleRootCause, meta.immediateInvestigation,
+      meta.suggestedFixes, meta.longTermImprovements,
       meta.inputChars, meta.inputPreview, meta.detail, meta.sensitive,
       e.payload,
     ]
