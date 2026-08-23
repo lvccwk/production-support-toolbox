@@ -181,29 +181,6 @@ export interface SqlSafetyResult {
   safe: boolean;
 }
 
-export interface HttpStatusEntry {
-  code: number;
-  phrase: string;
-  category: "1xx" | "2xx" | "3xx" | "4xx" | "5xx";
-  meaning: string;
-  commonCauses: string[];
-  whatToCheck: string[];
-}
-
-export interface CronField {
-  raw: string;
-  /** Expanded set of matching values, or null when `*` (any). */
-  values: number[] | null;
-}
-
-export interface CronDescription {
-  expression: string;
-  human: string;
-  nextRuns: string[];
-  /** Seconds since epoch (local interpretation). */
-  nextRunsUnix: number[];
-}
-
 export type IncidentStatus =
   | "Investigating"
   | "Identified"

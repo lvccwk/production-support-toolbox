@@ -20,14 +20,8 @@ const TimestampConverter = lazy(() =>
     default: m.TimestampConverter,
   })),
 );
-const HttpStatusHelper = lazy(() =>
-  import("@/features/http/HttpStatusHelper").then((m) => ({ default: m.HttpStatusHelper })),
-);
 const EncodingTool = lazy(() =>
   import("@/features/encoding/EncodingTool").then((m) => ({ default: m.EncodingTool })),
-);
-const CronHelper = lazy(() =>
-  import("@/features/cron/CronHelper").then((m) => ({ default: m.CronHelper })),
 );
 const IncidentNotes = lazy(() =>
   import("@/features/incidents/IncidentNotes").then((m) => ({ default: m.IncidentNotes })),
@@ -67,9 +61,7 @@ const TOOLS: ToolDefinition[] = [
   { id: "json", name: "JSON Toolbox", blurb: "Format, validate, minify, search", Component: JsonToolbox },
   { id: "sql", name: "SQL Toolbox", blurb: "Format, safety check, basic analysis", Component: SqlToolbox },
   { id: "timestamp", name: "Timestamp Converter", blurb: "Unix / local / UTC / ISO, any timezone", Component: TimestampConverter },
-  { id: "http", name: "HTTP Status Helper", blurb: "Searchable status code reference", Component: HttpStatusHelper },
   { id: "encoding", name: "Base64 / URL", blurb: "Encode and decode base64 and URLs", Component: EncodingTool },
-  { id: "cron", name: "Cron Helper", blurb: "Describe 5-field cron + next 5 runs", Component: CronHelper },
   { id: "incidents", name: "Incident Notes", blurb: "Local incident records (SQLite)", Component: IncidentNotes },
   { id: "history", name: "Support History", blurb: "Saved analyses: search, re-open, delete", Component: SupportHistory },
   { id: "dashboard", name: "Dashboard", blurb: "Trends: severity, error types, usage", Component: Dashboard },

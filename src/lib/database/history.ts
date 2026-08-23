@@ -35,9 +35,7 @@ const KNOWN_TOOLS = [
   "json",
   "sql",
   "timestamp",
-  "http",
   "encoding",
-  "cron",
 ];
 
 /** Validate a history entry before storing it. */

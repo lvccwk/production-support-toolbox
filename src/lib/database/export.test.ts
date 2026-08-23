@@ -205,6 +205,23 @@ describe("CSV export", () => {
     expect(csv).toContain('{""input"":""demo log""}');
   });
 
+  it("formats history createdAt as Hong Kong local wall clock (UTC+8) in CSV", () => {
+    createHistoryEntry(
+      validateHistoryInput({
+        tool: "log-analyzer",
+        system: "PaymentBatch",
+        summary: "tz check",
+        severity: "Low",
+        payload: "{}",
+      }),
+      { createdAt: "2026-08-23T06:14:10.828Z" },
+    );
+    const csv = historyToCsv(exportAllData().history);
+    // 06:14 UTC == 14:14 Asia/Hong_Kong; raw ISO must never leak into the CSV.
+    expect(csv).toContain('"2026-08-23 14:14:10"');
+    expect(csv).not.toContain("2026-08-23T06:14:10.828Z");
+  });
+
   it("exports the history severity column", () => {
     createHistoryEntry(
       validateHistoryInput({

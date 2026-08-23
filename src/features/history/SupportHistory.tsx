@@ -18,9 +18,7 @@ const TOOL_NAMES: Record<string, string> = {
   json: "JSON Toolbox",
   sql: "SQL Toolbox",
   timestamp: "Timestamp Converter",
-  http: "HTTP Status Helper",
   encoding: "Base64 / URL",
-  cron: "Cron Helper",
 };
 
 async function readJson<T>(res: Response): Promise<{ ok: boolean; data?: T; error?: string }> {

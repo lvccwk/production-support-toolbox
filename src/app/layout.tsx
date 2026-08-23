@@ -16,7 +16,7 @@ const THEME_INIT_SCRIPT = `
 export const metadata: Metadata = {
   title: "Production Support Toolbox",
   description:
-    "Local-first internal toolkit: log analysis, log comparison, JSON/SQL/timestamp/cron helpers, incident notes and support history.",
+    "Local-first internal toolkit: log analysis, log comparison, JSON/SQL/timestamp helpers, incident notes and support history.",
 };
 
 export default function RootLayout({

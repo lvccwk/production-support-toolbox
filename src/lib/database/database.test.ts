@@ -154,7 +154,7 @@ describe("history repository (section 15)", () => {
 
   it("rejects invalid severity", () => {
     expect(() =>
-      validateHistoryInput({ tool: "cron", summary: "x", severity: "Epic" as never }),
+      validateHistoryInput({ tool: "timestamp", summary: "x", severity: "Epic" as never }),
     ).toThrowError(/Invalid severity/);
   });
 });

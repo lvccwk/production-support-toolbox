@@ -162,7 +162,7 @@ describe("buildDashboardSummary", () => {
       analysisPayload("Medium", ["Timeout", "Custom Error"], "ai-fallback"),
     );
     // Non-log tools and legacy rows (no analysis) must not contribute.
-    save("cron", "schedule", "Low", "", {});
+    save("json", "schedule", "Low", "", {});
 
     const summary = buildDashboardSummary();
     const counts = Object.fromEntries(summary.history.errorTypes.map((e) => [e.name, e.count]));

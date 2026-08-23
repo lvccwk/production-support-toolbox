@@ -126,15 +126,13 @@ Rules:
 | **JSON Toolbox** | Format, validate (with position), minify, search keys/values (e.g. `transactionId`, `status`, `errorCode`). Copy / clear everywhere. |
 | **SQL Toolbox** | Text-only tools — never connects to a database. Format SQL, safety check (`DELETE`/`DROP`/`TRUNCATE`, `UPDATE`/`DELETE` without `WHERE` → WARNING), basic analysis (statement type, tables, WHERE, JOIN, ORDER BY, GROUP BY, LIMIT, `?` parameters). |
 | **Timestamp Converter** | Unix seconds / milliseconds, ISO 8601, UTC and local wall clock in any IANA timezone (default `Asia/Hong_Kong`). Naive datetimes are interpreted in the selected timezone. |
-| **HTTP Status Helper** | Searchable reference (~70 codes): meaning, common production causes, what to check. |
 | **Base64 / URL** | UTF-8-safe Base64 encode/decode, URL encode (`hello world` → `hello%20world`) / decode. |
-| **Cron Helper** | 5-field cron → human description (e.g. `0 8 * * *` → “Runs every day at 08:00.”) and the next 5 execution times. Supports `*`, lists, ranges, steps, month/weekday names, and the standard day-of-month/day-of-week rule. |
 | **Incident Notes** | Incident records (title, system, environment, severity, detected time, symptoms, root cause, immediate fix, permanent fix, status, notes) stored in SQLite. Search, edit, delete. |
 | **Support History** | Explicitly saved analyses (date, tool, system, summary, severity). Search, delete, **re-open** (the original inputs are restored in the tool). Nothing is stored automatically. |
 | **Dashboard** | Aggregated report over saved analyses + incidents — 總數 / High+ 佔比 / AI-fallback 次數 / 開嘅 incidents，severity 分佈、top error types（直接喺 SQLite 用 JSON1 由儲存嘅分析快照聚合）、工具用量、系統 Top 10、每日 High+ 趨勢。唔使開 CSV 都睇到趨勢。 |
 | **Custom Rules** | Custom-rules 嘅人用 GUI：瀏覽／新增／編輯／啟停／刪除規則（scope、patterns、severity、分析輸出欄位），每次儲存行足 server 全套驗證（regex 語法 + ReDoS 篩查 + torture test）。非技術用戶唔使掂 API。 |
 | **Alerts** | Alert rules + 通知記錄：規則對「Save Analysis」呢一刻評估（minSeverity ≥、可選 errorTypes / systems / tools 過濾），中咗一定記錄站內通知；可選 webhook（generic POST JSON —— Teams / Slack / 任何嘢）做額外送達，per-signal cooldown 防轟炸。「Send Test」即場驗證 webhook。 |
-| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. The JSON backup is schema v2 and covers **incidents + history + custom rules**; imports are all-or-nothing (any invalid entry rolls the whole bundle back, duplicates skipped). CSVs are **spreadsheet-safe** (formula-injection prefixes `= + - @` neutralized). History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); the JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. The Agent API section links the machine-readable OpenAPI document (`/api/openapi.json`). |
+| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. The JSON backup is schema v2 and covers **incidents + history + custom rules**; imports are all-or-nothing (any invalid entry rolls the whole bundle back, duplicates skipped). CSVs are **spreadsheet-safe** (formula-injection prefixes `= + - @` neutralized). History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); `createdAt` is written as Hong Kong local wall clock (`YYYY-MM-DD HH:mm:ss`, UTC+8) instead of raw ISO so spreadsheets look sane. The JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. The Agent API section links the machine-readable OpenAPI document (`/api/openapi.json`). |
 
 Every tool follows the same pattern: **Input → Action buttons → Result →
 Copy → Clear**, with large monospace text areas, dark mode, and desktop-first
@@ -228,9 +226,7 @@ Available tools (`POST /api/tools/<id>`):
 | `json` | format / validate / minify / search |
 | `sql` | format / safety check / basic analysis (text-only, never executes) |
 | `timestamp` | Unix / ISO / UTC / local conversion in any IANA timezone |
-| `http` | searchable HTTP status reference (meaning, causes, what-to-check) |
 | `encoding` | Base64 / URL encode-decode |
-| `cron` | describe 5-field cron + next 5 execution times |
 | `rules` | scoped custom rule registry (see below) |
 
 Data endpoints are also agent-callable: `/api/incidents` (CRUD),
@@ -256,8 +252,8 @@ list `bearerAuth`), so an agent can onboard without reading this page.
   `PST_REMOTE_ACCESS=true` (or any token is configured) every data route
   requires `Authorization: Bearer <token>` with the matching scope
   (read/write/admin — see "Remote mode & API access control"). The pure
-  stateless tools (`compare`, `json`, `sql`, `timestamp`, `http`, `encoding`,
-  `cron`, and the `GET /api/tools` manifest) stay open; `analyze`, `rules*`,
+  stateless tools (`compare`, `json`, `sql`, `timestamp`, `encoding`,
+  and the `GET /api/tools` manifest) stay open; `analyze`, `rules*`,
   incidents/history/import/export are protected.
 - `GET /api/tools` returns the manifest so an agent can self-serve without
   reading this README.
@@ -354,7 +350,7 @@ production-support-toolbox/
   src/
     app/                     # Next.js app router + API routes
       api/
-        tools/               # Agent API: analyze, compare, json, sql, timestamp, http, encoding, cron
+        tools/               # Agent API: analyze, compare, json, sql, timestamp, encoding
         tools/rules/         # custom rule registry (+ [id], import)
         incidents/           # GET/POST + [id] GET/PUT/DELETE
         history/             # GET/POST + [id] GET/DELETE
@@ -370,9 +366,7 @@ production-support-toolbox/
       json/                  # JSON Toolbox UI
       sql/                   # SQL Toolbox UI
       timestamp/             # Timestamp Converter UI
-      http/                  # HTTP Status Helper UI
       encoding/              # Base64 / URL UI
-      cron/                  # Cron Helper UI
       incidents/             # Incident Notes UI
       history/               # Support History UI
       dashboard/             # Dashboard UI (trends/aggregation)
@@ -386,8 +380,6 @@ production-support-toolbox/
       json/                  # format/validate/minify/search
       sql/                   # formatter, safety checker, analyzer
       timestamp/             # Unix/ISO/UTC/timezone conversion (Intl only)
-      http/                  # HTTP status catalogue
-      cron/                  # 5-field cron parser + next-run computation
       encoding/              # base64 / URL encode/decode
       sensitive/             # sensitive-data keyword detection
       llm/                   # shared server helpers (redact, dossier, log input validation)

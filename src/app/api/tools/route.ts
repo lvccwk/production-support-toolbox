@@ -64,15 +64,6 @@ const TOOLS = [
     output: "unixSeconds, unixMilliseconds, iso8601, local, utc, timezone, parsedAs",
   },
   {
-    id: "http",
-    method: "POST",
-    path: "/api/tools/http",
-    description:
-      "Searchable HTTP status reference: meaning, common production causes, what to check.",
-    input: { query: "503 | gateway timeout | 4xx (empty = all codes)" },
-    output: "entries: code, phrase, meaning, commonCauses, whatToCheck",
-  },
-  {
     id: "encoding",
     method: "POST",
     path: "/api/tools/encoding",
@@ -82,14 +73,6 @@ const TOOLS = [
       action: "base64-encode | base64-decode | url-encode | url-decode | url-encode-path",
     },
     output: "output",
-  },
-  {
-    id: "cron",
-    method: "POST",
-    path: "/api/tools/cron",
-    description: "Describe a 5-field cron expression and list the next 5 execution times.",
-    input: { expression: "0 8 * * *" },
-    output: "human, nextRuns (ISO strings), nextRunsUnix",
   },
   {
     id: "rules",

@@ -469,9 +469,6 @@ export function historyCsvMeta(entry: HistoryEntry): HistoryCsvMeta {
     case "timestamp":
       detail = str(payload.timezone) || "Asia/Hong_Kong";
       break;
-    case "cron":
-      detail = str(payload.input);
-      break;
     default:
       detail = "";
   }
@@ -496,6 +493,18 @@ export function historyCsvMeta(entry: HistoryEntry): HistoryCsvMeta {
   };
 }
 
+/**
+ * Format an ISO timestamp as Hong Kong local wall clock (Asia/Hong_Kong,
+ * UTC+8, no DST) for spreadsheet-friendly CSV output.
+ */
+export function formatCsvWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const local = new Date(d.getTime() + 8 * 3_600_000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())} ${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}`;
+}
+
 export function historyToCsv(entries: HistoryEntry[]): string {
   const header = [
     "id", "createdAt", "tool", "system", "summary", "severity",
@@ -507,7 +516,7 @@ export function historyToCsv(entries: HistoryEntry[]): string {
   const rows = entries.map((e) => {
     const meta = historyCsvMeta(e);
     return [
-      e.id, e.createdAt, e.tool, e.system, e.summary, e.severity ?? "",
+      e.id, formatCsvWhen(e.createdAt), e.tool, e.system, e.summary, e.severity ?? "",
       meta.analysisSource, meta.matchedRuleCount, meta.errorTypes,
       meta.affectedComponents, meta.possibleRootCause, meta.immediateInvestigation,
       meta.suggestedFixes, meta.longTermImprovements,

@@ -270,7 +270,7 @@ describe("data API flows (CRUD, export/import, rules lifecycle)", () => {
         fakeRequest("http://localhost/api/history", {
           method: "POST",
           headers,
-          body: { tool: "cron", summary: "backup me", severity: "Low", payload: "{}" },
+          body: { tool: "json", summary: "backup me", severity: "Low", payload: "{}" },
         }),
       );
       const exported = await exportRoute.GET(

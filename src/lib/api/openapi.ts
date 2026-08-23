@@ -112,7 +112,7 @@ const historyEntry: JsonSchema = {
   properties: {
     id: { type: "integer" },
     createdAt: { type: "string", description: "ISO timestamp (preserved on import)." },
-    tool: { type: "string", enum: ["log-analyzer", "log-comparison", "json", "sql", "timestamp", "http", "encoding", "cron"] },
+    tool: { type: "string", enum: ["log-analyzer", "log-comparison", "json", "sql", "timestamp", "encoding"] },
     system: { type: "string" },
     summary: { type: "string" },
     severity: { ...severitySchema, nullable: true },
@@ -421,28 +421,12 @@ export function buildOpenApiDoc(): Record<string, unknown> {
         "unixSeconds, unixMilliseconds, iso8601, local, utc, timezone, parsedAs",
       ),
     },
-    "/api/tools/http": {
-      post: openTool(
-        "HTTP status helper",
-        "Searchable HTTP status reference (meaning, common production causes, what to check).",
-        { query: "503 | gateway timeout | 4xx" },
-        "entries[]",
-      ),
-    },
     "/api/tools/encoding": {
       post: openTool(
         "Base64 / URL",
         "Base64 (UTF-8) and URL encode/decode.",
         { input: "hello world", action: "base64-encode | url-encode" },
         "output",
-      ),
-    },
-    "/api/tools/cron": {
-      post: openTool(
-        "Cron helper",
-        "Describe a 5-field cron expression + next 5 runs.",
-        { expression: "0 8 * * *" },
-        "human, nextRuns, nextRunsUnix",
       ),
     },
 
