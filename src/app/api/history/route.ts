@@ -4,6 +4,7 @@ import {
   listHistory,
   validateHistoryInput,
 } from "@/lib/database/history";
+import { evaluateAlerts } from "@/lib/database/alerts";
 import { withApi } from "@/lib/api/route";
 
 export const runtime = "nodejs";
@@ -17,12 +18,19 @@ export async function GET(request: NextRequest) {
   });
 }
 
-/** POST /api/history — save an analysis explicitly (never automatic). */
+/**
+ * POST /api/history — save an analysis explicitly (never automatic).
+ *
+ * Alert rules are evaluated against the freshly saved entry (deterministic,
+ * local). evaluateAlerts NEVER throws and webhook failures are recorded as
+ * failed notifications, so a broken webhook can never break the save.
+ */
 export async function POST(request: NextRequest) {
   return withApi(request, { route: "/api/history", scope: "write" }, async () => {
     const raw = (await request.json()) as Record<string, unknown>;
     const input = validateHistoryInput(raw);
     const entry = createHistoryEntry(input);
+    await evaluateAlerts(entry);
     return new NextResponse(JSON.stringify({ ok: true, data: entry }), {
       status: 201,
       headers: { "Content-Type": "application/json" },

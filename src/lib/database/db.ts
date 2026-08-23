@@ -108,6 +108,42 @@ function migrate(database: Database.Database): void {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_custom_rules_active ON custom_rules (active);
+
+    -- Alert rules (user-configured triggers on saved analyses).
+    CREATE TABLE IF NOT EXISTS alert_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      condition TEXT NOT NULL,
+      channels TEXT NOT NULL DEFAULT '[]',
+      cooldown_minutes INTEGER NOT NULL DEFAULT 60,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_alert_rules_active ON alert_rules (active);
+
+    -- Every firing, always recorded locally (webhook delivery optional).
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      rule_id INTEGER,
+      rule_name TEXT NOT NULL DEFAULT '',
+      level TEXT NOT NULL DEFAULT 'Informational',
+      title TEXT NOT NULL DEFAULT '',
+      message TEXT NOT NULL DEFAULT '',
+      channel TEXT NOT NULL DEFAULT 'in-app',
+      status TEXT NOT NULL DEFAULT 'sent',
+      detail TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications (created_at DESC);
+
+    -- Anti-spam: last firing per (rule, signal key) for cooldown purposes.
+    CREATE TABLE IF NOT EXISTS alert_firings (
+      rule_id INTEGER NOT NULL,
+      fire_key TEXT NOT NULL,
+      fired_at TEXT NOT NULL,
+      PRIMARY KEY (rule_id, fire_key)
+    );
   `);
 
   // Legacy databases (pre-hybrid era) created analysis_cache with a different

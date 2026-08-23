@@ -35,6 +35,15 @@ const IncidentNotes = lazy(() =>
 const SupportHistory = lazy(() =>
   import("@/features/history/SupportHistory").then((m) => ({ default: m.SupportHistory })),
 );
+const Dashboard = lazy(() =>
+  import("@/features/dashboard/Dashboard").then((m) => ({ default: m.Dashboard })),
+);
+const RulesManager = lazy(() =>
+  import("@/features/rules/RulesManager").then((m) => ({ default: m.RulesManager })),
+);
+const AlertsPage = lazy(() =>
+  import("@/features/alerts/AlertsPage").then((m) => ({ default: m.AlertsPage })),
+);
 const SettingsPage = lazy(() =>
   import("@/features/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
@@ -63,6 +72,9 @@ const TOOLS: ToolDefinition[] = [
   { id: "cron", name: "Cron Helper", blurb: "Describe 5-field cron + next 5 runs", Component: CronHelper },
   { id: "incidents", name: "Incident Notes", blurb: "Local incident records (SQLite)", Component: IncidentNotes },
   { id: "history", name: "Support History", blurb: "Saved analyses: search, re-open, delete", Component: SupportHistory },
+  { id: "dashboard", name: "Dashboard", blurb: "Trends: severity, error types, usage", Component: Dashboard },
+  { id: "rules", name: "Custom Rules", blurb: "Teach the engine your failure signatures", Component: RulesManager },
+  { id: "alerts", name: "Alerts", blurb: "Alert rules + webhooks + notification log", Component: AlertsPage },
   { id: "settings", name: "Settings", blurb: "Backup / export / import, Agent API", Component: SettingsPage },
 ];
 

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  countActiveCustomRules,
   createCustomRule,
   listCustomRules,
 } from "@/lib/database/customRules";
-import { scopeMatches, validateCustomRuleInput } from "@/lib/rules/custom";
+import { maxCustomRules, scopeMatches, validateCustomRuleInput } from "@/lib/rules/custom";
 import { assertPatternsPerformant } from "@/lib/rules/verify";
 import { withApi } from "@/lib/api/route";
 import { guardBodySize } from "@/lib/api/http";
@@ -48,7 +49,8 @@ export async function GET(request: NextRequest) {
       };
       rules = rules.filter((r) => scopeMatches(r.scope, ctx));
     }
-    return { rules };
+    // Capacity metadata lets the GUI show the active-rule budget.
+    return { rules, activeCount: countActiveCustomRules(), cap: maxCustomRules() };
   });
 }
 

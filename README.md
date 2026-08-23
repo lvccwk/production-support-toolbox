@@ -107,6 +107,9 @@ Rules:
 | `PST_API_TOKEN_WRITE` / `PST_API_TOKEN_READ` | scoped tokens (optional extra) |
 | `PST_ALLOWED_DEV_ORIGINS` | comma-separated origins for dev resources / CSRF allow-list |
 | `PST_MAX_CUSTOM_RULES` | active custom-rule cap (default 200) |
+| `PST_MAX_ALERT_RULES` | active alert-rule cap (default 100) |
+| `PST_ALERTS_ENABLED=off` | disable alert evaluation entirely (rules stay configurable) |
+| `PST_ALERT_WEBHOOK_TIMEOUT_MS` | webhook delivery timeout (default 5000) |
 | `PST_BACKUP_RETENTION` | days of `backups-*.json` to keep (default 30) |
 | `PST_AUTO_BACKUP=off` | disable the daily auto-backup |
 | `PST_DATA_DIR` | SQLite file location override |
@@ -128,7 +131,10 @@ Rules:
 | **Cron Helper** | 5-field cron → human description (e.g. `0 8 * * *` → “Runs every day at 08:00.”) and the next 5 execution times. Supports `*`, lists, ranges, steps, month/weekday names, and the standard day-of-month/day-of-week rule. |
 | **Incident Notes** | Incident records (title, system, environment, severity, detected time, symptoms, root cause, immediate fix, permanent fix, status, notes) stored in SQLite. Search, edit, delete. |
 | **Support History** | Explicitly saved analyses (date, tool, system, summary, severity). Search, delete, **re-open** (the original inputs are restored in the tool). Nothing is stored automatically. |
-| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. The JSON backup is schema v2 and covers **incidents + history + custom rules**; imports are all-or-nothing (any invalid entry rolls the whole bundle back, duplicates skipped). CSVs are **spreadsheet-safe** (formula-injection prefixes `= + - @` neutralized). History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); the JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. |
+| **Dashboard** | Aggregated report over saved analyses + incidents — 總數 / High+ 佔比 / AI-fallback 次數 / 開嘅 incidents，severity 分佈、top error types（直接喺 SQLite 用 JSON1 由儲存嘅分析快照聚合）、工具用量、系統 Top 10、每日 High+ 趨勢。唔使開 CSV 都睇到趨勢。 |
+| **Custom Rules** | Custom-rules 嘅人用 GUI：瀏覽／新增／編輯／啟停／刪除規則（scope、patterns、severity、分析輸出欄位），每次儲存行足 server 全套驗證（regex 語法 + ReDoS 篩查 + torture test）。非技術用戶唔使掂 API。 |
+| **Alerts** | Alert rules + 通知記錄：規則對「Save Analysis」呢一刻評估（minSeverity ≥、可選 errorTypes / systems / tools 過濾），中咗一定記錄站內通知；可選 webhook（generic POST JSON —— Teams / Slack / 任何嘢）做額外送達，per-signal cooldown 防轟炸。「Send Test」即場驗證 webhook。 |
+| **Settings** | Backup / export / import (JSON bundle or per-table CSV) and a pointer to the Agent API. The JSON backup is schema v2 and covers **incidents + history + custom rules**; imports are all-or-nothing (any invalid entry rolls the whole bundle back, duplicates skipped). CSVs are **spreadsheet-safe** (formula-injection prefixes `= + - @` neutralized). History CSV includes derived columns (`analysisSource`, `matchedRuleCount`, `errorTypes`, `affectedComponents`, bilingual `possibleRootCause` / `immediateInvestigation` / `suggestedFixes` / `longTermImprovements`, plus `inputChars`, `inputPreview`, tool `detail`, `sensitive`); the JSON backup carries a parsed `analysis` object on every history entry so no one has to open raw payloads. The Agent API section links the machine-readable OpenAPI document (`/api/openapi.json`). |
 
 Every tool follows the same pattern: **Input → Action buttons → Result →
 Copy → Clear**, with large monospace text areas, dark mode, and desktop-first
@@ -229,6 +235,12 @@ Available tools (`POST /api/tools/<id>`):
 
 Data endpoints are also agent-callable: `/api/incidents` (CRUD),
 `/api/history` (search with `?q=`), `/api/export`, `/api/import`.
+Reporting/alerts endpoints: `GET /api/dashboard` (aggregated summary),
+`/api/alerts` (rules CRUD + `[id]/test` send-test), `GET/DELETE
+/api/notifications` (the alert-firing log). The whole surface is
+documented machine-readably: **`GET /api/openapi.json`** (OpenAPI 3.1 —
+paths, scopes, schemas, examples; tools stay `security: []`, data routes
+list `bearerAuth`), so an agent can onboard without reading this page.
 
 - Every `/api/tools/*` call is **pure local + deterministic + free**: fixed
   JSON contract, `{ ok: true, data }` on success, `{ ok: false, error, message }`
@@ -296,6 +308,45 @@ curl -X DELETE http://localhost:3000/api/tools/rules/1
   `GET /api/tools/rules?export=json` (per-deployment storage — each company
   keeps its own namespace).
 
+## Alerts & notifications (v1)
+
+Alert rules react to **saved analyses** (the explicit `Save Analysis` moment —
+never automatic runs) and fire **locally + deterministically**:
+
+- **Condition** — `minSeverity` (≥) + optional `errorTypes` / `systems` /
+  `tools` filters (default tool: `log-analyzer`). Matching uses the same
+  severity order as the rule engine; error types come from the stored
+  analysis snapshot (rules or AI-fallback output), never from re-running AI.
+- **Delivery** — every firing is **always recorded** as a local notification
+  (visible under **Alerts** → 通知記錄), so the concept works with a rule and
+  zero other config. Optionally the rule has webhook URL(s) — delivery is a
+  generic `POST` JSON (Teams / Slack / anything):
+  `{ event, firedAt, rule, entry:{id,tool,system,summary,severity}, analysis:{errorTypes} }`.
+  The payload never contains the raw log. Webhook failures are recorded as
+  `status=failed` and **never break the save** that triggered them.
+- **Cooldown** — per (rule, signal) minutes; the same system/severity/error
+  signature is suppressed inside the window (spam guard).
+- **Test** — `POST /api/alerts/[id]/test` (or the GUI `Send Test` button)
+  delivers a test payload immediately and reports `{ delivered, detail }`.
+- **Scoping** — evaluation hooks the history save route only: imports and
+  backfills deliberately do NOT fire alerts (no bulk-restore spam).
+- **Off switch** — `PST_ALERTS_ENABLED=off` disables evaluation globally.
+- Webhook validation rejects non-`http(s)` URLs and embedded credentials;
+  note this is a local tool, so webhooks may reach your LAN by design.
+
+```bash
+# Alert when any High+ saved analysis mentions SQL Exception on ledger
+curl -X POST http://localhost:3000/api/alerts \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ledger sql high","condition":{"minSeverity":"High","errorTypes":["SQL Exception"],"systems":["ledger"]},"channels":[{"type":"webhook","url":"https://hooks.example.com/team"}],"cooldownMinutes":60}'
+
+# Verify delivery instantly
+curl -X POST http://localhost:3000/api/alerts/1/test
+
+# See what fired (always recorded, fails included)
+curl http://localhost:3000/api/notifications
+```
+
 ## Project structure
 
 ```text
@@ -304,9 +355,14 @@ production-support-toolbox/
     app/                     # Next.js app router + API routes
       api/
         tools/               # Agent API: analyze, compare, json, sql, timestamp, http, encoding, cron
+        tools/rules/         # custom rule registry (+ [id], import)
         incidents/           # GET/POST + [id] GET/PUT/DELETE
         history/             # GET/POST + [id] GET/DELETE
         export/ import/      # backup bundle / import
+        dashboard/           # aggregated report (GET)
+        alerts/              # alert rules (+ [id], [id]/test)
+        notifications/       # alert-firing log (GET/DELETE)
+        openapi.json/        # OpenAPI 3.1 document (GET)
     components/              # shared UI primitives, AppShell (nav/theme), SaveButton
     features/
       log-analyzer/          # Log Analyzer UI
@@ -319,8 +375,11 @@ production-support-toolbox/
       cron/                  # Cron Helper UI
       incidents/             # Incident Notes UI
       history/               # Support History UI
+      dashboard/             # Dashboard UI (trends/aggregation)
+      rules/                 # Custom Rules GUI (human-facing rule manager)
+      alerts/                # Alerts UI (rules + notification log)
     lib/
-      database/              # SQLite access + incident/history repositories
+      database/              # SQLite access + incident/history/alert repositories + dashboard aggregation
       log-parser/            # field extraction from log text
       rules/                 # rule catalogue + engine
       log-comparison/        # before/after diff logic
@@ -347,9 +406,13 @@ components stay thin.
 - WAL mode is enabled for reliable local writes.
 - Override the location with the environment variable `PST_DATA_DIR`
   (used by tests and advanced setups).
-- The tables are `incidents`, `history`, `custom_rules` and `analysis_cache`
-  (a disposable AI-fallback cache that is intentionally NOT backed up); the
-  schema is created automatically at startup (`src/lib/database/db.ts`).
+- The tables are `incidents`, `history`, `custom_rules`, `alert_rules`,
+  `notifications` and `alert_firings` (per-rule cooldown keys), plus
+  `analysis_cache` (a disposable AI-fallback cache that is intentionally NOT
+  backed up); the schema is created automatically at startup
+  (`src/lib/database/db.ts`). Dashboard aggregation reads the same tables
+  (`src/lib/database/dashboard.ts`, JSON1 straight in SQLite — no full
+  payload loads into JS).
 - **Backups:** `<data dir>/backups/backups-YYYY-MM-DD.json`, written at most
   once per day (same canonical serializer as the manual export), atomically
   replaced (temp file + rename, so an interrupted write never corrupts the

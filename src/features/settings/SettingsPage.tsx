@@ -65,6 +65,19 @@ export function SettingsPage() {
           <code className="font-mono text-xs"> Authorization: Bearer &lt;token&gt;</code>
           （scope：read / write / admin）。
         </p>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+          成個 API surface（tools / data / rules / dashboard / alerts）有
+          OpenAPI 3.1 描述：
+          <a
+            href="/api/openapi.json"
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono text-xs text-blue-700 underline hover:text-blue-800 dark:text-blue-400"
+          >
+            /api/openapi.json
+          </a>{" "}
+          —— agent 或第三方可以自動發現 endpoints、scope 同 schema，唔使讀 README。
+        </p>
       </Card>
     </div>
   );

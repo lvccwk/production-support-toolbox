@@ -315,3 +315,113 @@ export interface CustomRuleInput {
   longTermImprovements?: string[];
   active?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard (aggregation over history + incidents)
+// ---------------------------------------------------------------------------
+
+export interface SeverityCount {
+  severity: Severity;
+  count: number;
+}
+
+export interface NameCount {
+  name: string;
+  count: number;
+}
+
+export interface DayBucket {
+  /** Local date (YYYY-MM-DD) of the bucket. */
+  day: string;
+  total: number;
+  /** Entries with severity High or Critical that day. */
+  highPlus: number;
+}
+
+export interface DashboardSummary {
+  generatedAt: string;
+  history: {
+    total: number;
+    /** Filled for log-analyzer entries only (others have no analysis). */
+    aiFallbackCount: number;
+    bySeverity: SeverityCount[];
+    byTool: NameCount[];
+    bySystem: NameCount[];
+    /** Error-type frequency across log-analyzer history (top N). */
+    errorTypes: NameCount[];
+    /** Daily buckets covering the last `days` days (oldest first). */
+    trend: DayBucket[];
+  };
+  incidents: {
+    total: number;
+    open: number;
+    byStatus: NameCount[];
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Alerts / notifications
+// ---------------------------------------------------------------------------
+
+/** When an alert rule fires — which saved analyses it reacts to. */
+export interface AlertCondition {
+  /** Fire when the saved entry's severity is >= this. */
+  minSeverity: Severity;
+  /** Optional: fire only when at least one of these error types is present. */
+  errorTypes: string[];
+  /** Optional: fire only when the entry's system is in this list. */
+  systems: string[];
+  /** Optional: fire only for these tools (default: ["log-analyzer"]). */
+  tools: string[];
+}
+
+/** Delivery target of an alert (v1: a single generic webhook). */
+export interface AlertChannel {
+  type: "webhook";
+  url: string;
+}
+
+/** A user-configured alert rule (stored in SQLite). */
+export interface AlertRule {
+  id: number;
+  name: string;
+  active: boolean;
+  condition: AlertCondition;
+  channels: AlertChannel[];
+  /** Per (rule, signal) cooldown in minutes — suppress repeat spam. */
+  cooldownMinutes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertRuleInput {
+  name: string;
+  active?: boolean;
+  condition: {
+    minSeverity: Severity;
+    errorTypes?: string[];
+    systems?: string[];
+    tools?: string[];
+  };
+  channels?: AlertChannel[];
+  cooldownMinutes?: number;
+}
+
+export type NotificationStatus = "sent" | "failed";
+export type NotificationChannel = "webhook" | "in-app" | "test";
+
+/** One fired alert — always recorded locally, webhook delivery optional. */
+export interface Notification {
+  id: number;
+  createdAt: string;
+  ruleId: number | null;
+  ruleName: string;
+  /** Entry severity at firing time. */
+  level: Severity;
+  title: string;
+  message: string;
+  channel: NotificationChannel;
+  status: NotificationStatus;
+  /** Delivery detail (statusCode / error) — not user data. */
+  detail: string;
+}
