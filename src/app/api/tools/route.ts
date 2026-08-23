@@ -14,7 +14,7 @@ const TOOLS = [
     method: "POST",
     path: "/api/tools/analyze",
     description:
-      "Deterministic log analysis: severity, error types, evidence lines and extracted fields (timestamps, levels, components, identifiers, exceptions, sources, HTTP statuses). Every text section is returned in BOTH English and Traditional Chinese (…Zh fields). Local rule engine first; when NO rule matches and PST_AI_FALLBACK=true, an AI fallback (OpenRouter) AUTOMATICALLY fills a structured bilingual analysis (analysisSource: ai-fallback, cached per masked-log hash).",
+      "Deterministic log analysis: severity, error types, evidence lines and extracted fields (timestamps, levels, components, identifiers, exceptions, sources, HTTP statuses). Every text section is returned in BOTH English and Traditional Chinese (…Zh fields; Chinese is hard-converted to Traditional 繁體, never Simplified). Local rule engine first; when NO rule matches and PST_AI_FALLBACK=true, an AI fallback (OpenRouter) AUTOMATICALLY fills a structured bilingual analysis (analysisSource: ai-fallback, cached per masked-log hash).",
     input: {
       logs: [
         "2026-08-21 10:15:22 ERROR PaymentBatch java.lang.NullPointerException at PaymentService.java:125",

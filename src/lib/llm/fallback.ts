@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getDb } from "@/lib/database/db";
 import { extractJsonBlock, tailText } from "./json";
+import { forceTraditionalAnalysis } from "./zh";
 
 /**
  * AI fallback for rule-engine misses (Hybrid Pattern).
@@ -53,6 +54,12 @@ export interface FallbackAnalysis {
   longTermImprovementsZh: string[];
   confidence: number;
 }
+
+/**
+ * Bump whenever the prompt/schema changes so old cached analyses are
+ * invalidated (e.g. v2: Simplified -> Traditional Chinese hard conversion).
+ */
+export const FALLBACK_PROMPT_VERSION = 2;
 
 const SEVERITIES = ["Critical", "High", "Medium", "Low", "Informational"] as const;
 
@@ -138,8 +145,9 @@ export function buildFallbackPrompt(context: FallbackContext): string {
   return [
     "A log line from a production system did NOT match any known rule pattern.",
     "Analyse it from the provided facts + log excerpt ONLY — never invent files, lines or components that are not present.",
-    "Output ONLY a JSON object with these fields (bilingual — every *Zh field in Traditional Chinese):",
+    "Output ONLY a JSON object with these fields (bilingual — every *Zh field in Traditional Chinese 繁體中文):",
     '{ "severity": "Critical|High|Medium|Low|Informational", "errorTypes": ["..."], "rootCauses": ["..."], "rootCausesZh": ["..."], "immediateInvestigation": ["..."], "immediateInvestigationZh": ["..."], "suggestedFixes": ["..."], "suggestedFixesZh": ["..."], "longTermImprovements": ["..."], "longTermImprovementsZh": ["..."], "confidence": 0.0-1.0 }',
+    "MANDATORY: every Chinese string MUST be Traditional Chinese (繁體中文) — Simplified Chinese (简体) is FORBIDDEN. Write 問題/影響/建議/檢查/分析/服務器日誌 as 問題/影響/建議/檢查/分析/伺服器日誌, never the simplified forms 问题/影响/建议/检查/分析/服务器日志.",
     "",
     `FACTS: levels=${JSON.stringify(context.levels)} components=${JSON.stringify(context.components)} exceptions=${JSON.stringify(context.exceptions)} httpStatuses=${JSON.stringify(context.httpStatuses)}`,
     "",
@@ -188,12 +196,19 @@ export function putFallbackCache(cacheKey: string, model: string, result: unknow
 
 export function fallbackCacheKey(outgoingLog: string, model: string): string {
   return createHash("sha256")
-    .update(JSON.stringify({ kind: "ai-fallback", log: outgoingLog, model }))
+    .update(
+      JSON.stringify({
+        kind: "ai-fallback",
+        promptVersion: FALLBACK_PROMPT_VERSION,
+        log: outgoingLog,
+        model,
+      }),
+    )
     .digest("hex");
 }
 
 const SYSTEM_PROMPT =
-  "You are a senior production support engineer. The deterministic rule engine found no match; fill in a structured bilingual (English + Traditional Chinese) analysis strictly from the given facts and log excerpt. Be concise and honest about uncertainty.";
+  "You are a senior production support engineer. The deterministic rule engine found no match; fill in a structured bilingual (English + Traditional Chinese 繁體中文) analysis strictly from the given facts and log excerpt. All Chinese output MUST be Traditional Chinese (繁體中文) — Simplified Chinese (简体) is FORBIDDEN. Be concise and honest about uncertainty.";
 
 /** Run the AI fallback for one analysis context. Never throws. */
 export async function runFallback(
@@ -210,7 +225,11 @@ export async function runFallback(
   const cached = getFallbackCache(cacheKey);
   if (cached !== null) {
     const validated = validateFallbackAnalysis(cached);
-    if (validated) return { ok: true, analysis: validated, cached: true, model };
+    if (validated) {
+      // Cache entries are stored already-converted; run the pass anyway so
+      // Traditional Chinese is guaranteed no matter what is in the store.
+      return { ok: true, analysis: forceTraditionalAnalysis(validated), cached: true, model };
+    }
     // Stale entry: fall through and re-run.
   }
 
@@ -257,10 +276,14 @@ export async function runFallback(
     if (!validated) {
       return { ok: false, error: "AI fallback returned invalid analysis (schema)." };
     }
-    putFallbackCache(cacheKey, model ?? "", validated);
+    // Hard guarantee: the model may write Simplified Chinese — convert every
+    // Chinese field to Traditional (繁體) before caching/returning, so the
+    // GUI, Support History and CSV/JSON exports only ever see Traditional.
+    const analysis = forceTraditionalAnalysis(validated);
+    putFallbackCache(cacheKey, model ?? "", analysis);
     return {
       ok: true,
-      analysis: validated,
+      analysis,
       cached: false,
       durationMs: Date.now() - start,
       model,

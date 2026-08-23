@@ -115,6 +115,29 @@ describe("runFallback", () => {
     expect(outcome.analysis?.confidence).toBe(0.6);
   });
 
+  it("forces Traditional Chinese even when the model emits Simplified Chinese", async () => {
+    const simplified = {
+      ...VALID,
+      rootCausesZh: ["问题分析建议"],
+      immediateInvestigationZh: ["检查服务器日志"],
+      suggestedFixesZh: ["重启服务"],
+      longTermImprovementsZh: ["增加监控"],
+    };
+    const line = "2026-08-21 10:00:00 ERROR weird thing F";
+    const fetchImpl = async () => chatResponse(JSON.stringify(simplified));
+    const first = await runFallback(context(line), optionsWith(fetchImpl));
+    expect(first.ok).toBe(true);
+    expect(first.analysis?.rootCausesZh).toEqual(["問題分析建議"]);
+    expect(first.analysis?.immediateInvestigationZh).toEqual(["檢查伺服器日誌"]);
+    expect(first.analysis?.suggestedFixesZh).toEqual(["重啓服務"]);
+    expect(first.analysis?.longTermImprovementsZh).toEqual(["增加監控"]);
+    // Cache hit path returns the same converted (Traditional) analysis.
+    const second = await runFallback(context(line), optionsWith(fetchImpl));
+    expect(second.cached).toBe(true);
+    expect(second.analysis?.rootCausesZh).toEqual(["問題分析建議"]);
+    expect(second.analysis?.immediateInvestigationZh).toEqual(["檢查伺服器日誌"]);
+  });
+
   it("caches identical masked input so repeats cost nothing", async () => {
     let calls = 0;
     const fetchImpl = async () => {
@@ -168,5 +191,7 @@ describe("buildFallbackPrompt", () => {
     expect(prompt).toContain("severity");
     expect(prompt).toContain("rootCausesZh");
     expect(prompt).toContain("L1: L1 text");
+    expect(prompt).toContain("繁體中文");
+    expect(prompt).toContain("FORBIDDEN");
   });
 });

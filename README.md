@@ -92,7 +92,10 @@ responsive layout. The **exact same logic** is exposed to agents via the
   = zero cost). The GUI shows a live progress panel (rule scan → AI call →
   result) whenever this runs, and marks every response with
   `analysisSource: "ai-fallback"`. Disabled by default; never triggered when
-  rules match.
+  rules match. **Chinese output is hard-converted to Traditional Chinese
+  (繁體中文):** every `*Zh` field passes through a deterministic OpenCC
+  conversion before being cached/displayed/saved, so Simplified Chinese
+  (简体) can never reach the GUI, history or exports.
 - `/api/tools/analyze` masks sensitive values (`password`, `token`,
   `authorization`, `api_key`, `client_secret`, …) in its response by default
   (`PST_REDACT=off` disables).
