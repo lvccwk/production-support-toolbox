@@ -62,7 +62,7 @@ npm run start     # serve the production build
 
 | Module | What it does |
 | --- | --- |
-| **Log Analyzer** | Paste application logs → severity, error types, possible root cause, affected components, immediate investigation, suggested fix, long-term improvement. Plus automatic extraction: timestamps, levels, components, `transactionId` / `requestId` / `traceId` / `correlationId` / `sessionId` / `userId`, exceptions, source files & line numbers, HTTP statuses, stack-trace detection. |
+| **Log Analyzer** | Paste application logs → severity, error types, possible root cause, affected components, immediate investigation, suggested fix, long-term improvement. Plus automatic extraction: timestamps, levels, components, `transactionId` / `requestId` / `traceId` / `correlationId` / `sessionId` / `userId`, exceptions, source files & line numbers, HTTP statuses, stack-trace detection. On zero rule matches the rule-result dashboard auto-collapses (expandable) so the AI fallback analysis takes focus. |
 | **Log Comparison** | Paste two logs (Before / After) → new errors, missing errors, changed HTTP codes (`200 → 500`), changed exception types / components / error lines, regression verdict. |
 | **JSON Toolbox** | Format, validate (with position), minify, search keys/values (e.g. `transactionId`, `status`, `errorCode`). Copy / clear everywhere. |
 | **SQL Toolbox** | Text-only tools — never connects to a database. Format SQL, safety check (`DELETE`/`DROP`/`TRUNCATE`, `UPDATE`/`DELETE` without `WHERE` → WARNING), basic analysis (statement type, tables, WHERE, JOIN, ORDER BY, GROUP BY, LIMIT, `?` parameters). |

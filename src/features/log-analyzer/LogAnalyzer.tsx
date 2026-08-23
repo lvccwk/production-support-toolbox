@@ -218,6 +218,9 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
   const [customRuleError, setCustomRuleError] = useState("");
   /** Analysis text display: 中英並排 (default, English for learning) / 中文 / English. */
   const [langMode, setLangMode] = useState<"both" | "zh" | "en">("both");
+  /** Rule-analysis detail sections: auto-collapsed when 0 rules match (the AI
+   *  fallback card becomes the focus; the empty dashboard is one click away). */
+  const [ruleDetailsOpen, setRuleDetailsOpen] = useState(true);
 
   /** AI fallback pipeline (auto-triggered when no rule matches). */
   const [aiResult, setAiResult] = useState<ServerAnalyzeData | null>(null);
@@ -339,6 +342,8 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
     const analysis = analyzeLog(value, info, toLogRules(applicable));
     const r = { analysis, info };
     setResult(r);
+    // Auto-collapse the rule dashboard when nothing matched (AI fallback focus).
+    setRuleDetailsOpen(analysis.matchedRuleIds.length > 0);
     return r;
   };
 
@@ -471,16 +476,33 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                 matched {result.analysis.matchedRuleIds.length} rule
                 {result.analysis.matchedRuleIds.length === 1 ? "" : "s"}
               </span>
-              <select
-                value={langMode}
-                onChange={(e) => setLangMode(e.target.value as "both" | "zh" | "en")}
-                className="ml-auto rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-                title="Analysis display language (English shown for learning)"
-              >
-                <option value="both">中英並排</option>
-                <option value="zh">中文</option>
-                <option value="en">English</option>
-              </select>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {result.analysis.matchedRuleIds.length === 0 && (
+                  <button
+                    type="button"
+                    aria-expanded={ruleDetailsOpen}
+                    onClick={() => setRuleDetailsOpen((v) => !v)}
+                    className="inline-flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700/60"
+                    title={
+                      ruleDetailsOpen
+                        ? "Collapse rule result details"
+                        : "Expand rule result details"
+                    }
+                  >
+                    {ruleDetailsOpen ? "收起規則細節 ▲" : "展開規則細節 ▼"}
+                  </button>
+                )}
+                <select
+                  value={langMode}
+                  onChange={(e) => setLangMode(e.target.value as "both" | "zh" | "en")}
+                  className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                  title="Analysis display language (English shown for learning)"
+                >
+                  <option value="both">中英並排</option>
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
             </div>
 
             {aiPhase === "running" && (
@@ -535,8 +557,44 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
               </div>
             )}
 
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <ResultBlock title="Error Type">
+            {result.analysis.matchedRuleIds.length === 0 && (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-800/40 dark:bg-amber-950/20">
+                <p className="text-sm text-zinc-700 dark:text-zinc-200">
+                  No known error pattern matched. 未有規則命中 — 規則分析儀表板已收合，
+                  分析重點見下方 AI 補充分析（可撳「展開規則細節」查看規則引擎結果）。
+                </p>
+                {aiPhase === "running" ? (
+                  <p className="mt-2 animate-pulse text-xs font-medium text-blue-600 dark:text-blue-400">
+                    AI 補充分析自動執行中…請看上方進度
+                  </p>
+                ) : aiError && aiConfigured === false ? (
+                  <p className="mt-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
+                    規則未命中。AI 補充分析未啟用 — 在 .env 設定{" "}
+                    <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono dark:bg-zinc-800">
+                      PST_AI_FALLBACK=true
+                    </code>{" "}
+                    並重啟後，規則未命中時會自動以 AI 補位分析。
+                  </p>
+                ) : aiError ? (
+                  <div className="mt-2">
+                    <p className="text-xs text-red-600 dark:text-red-400">{aiError}</p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => void triggerAiFallback()}
+                    >
+                      重試 AI 補充分析
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {(result.analysis.matchedRuleIds.length > 0 || ruleDetailsOpen) && (
+              <>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <ResultBlock title="Error Type">
                 {result.analysis.errorTypes.length > 0 ? (
                   <ul className="space-y-1 px-3 py-2">
                     {result.analysis.errorTypes.map((t) => (
@@ -547,34 +605,7 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                   </ul>
                 ) : (
                   <div className="px-3 py-2">
-                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                      No known error pattern matched.
-                    </p>
-                    {aiPhase === "running" ? (
-                      <p className="mt-2 animate-pulse text-xs font-medium text-blue-600 dark:text-blue-400">
-                        AI 補充分析自動執行中…請看上方進度
-                      </p>
-                    ) : aiError && aiConfigured === false ? (
-                      <p className="mt-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
-                        規則未命中。AI 補充分析未啟用 — 在 .env 設定{" "}
-                        <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono dark:bg-zinc-800">
-                          PST_AI_FALLBACK=true
-                        </code>{" "}
-                        並重啟後，規則未命中時會自動以 AI 補位分析。
-                      </p>
-                    ) : aiError ? (
-                      <div className="mt-2">
-                        <p className="text-xs text-red-600 dark:text-red-400">{aiError}</p>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="mt-2"
-                          onClick={() => void triggerAiFallback()}
-                        >
-                          重試 AI 補充分析
-                        </Button>
-                      </div>
-                    ) : null}
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">—</p>
                   </div>
                 )}
               </ResultBlock>
@@ -786,6 +817,8 @@ export function LogAnalyzer({ reopen }: { reopen?: ReopenRequest }) {
                   )}
                 </ResultBlock>
               </div>
+            )}
+              </>
             )}
           </Card>
 
