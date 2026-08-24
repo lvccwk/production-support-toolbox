@@ -1,0 +1,2 @@
+# 靜態資源目錄(Images / favicon 等)。暫時空,保留俾 Dockerfile COPY 用。
+# 如果呢個 file 被刪,記得同步改 Dockerfile 嘅 /app/public COPY。
