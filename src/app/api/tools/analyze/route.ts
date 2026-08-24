@@ -1,20 +1,6 @@
 import { NextRequest } from "next/server";
-import { extractLogInfo } from "@/lib/log-parser/parser";
-import { analyzeLog } from "@/lib/rules/engine";
-import { scopeMatches, toLogRules } from "@/lib/rules/custom";
-import { redactSensitiveValues } from "@/lib/llm/redact";
-import { parseLogsInput } from "@/lib/llm/logs";
-import { loadIncidentDossier } from "@/lib/llm/dossier";
-import { listCustomRules } from "@/lib/database/customRules";
-import { buildLogSummary } from "@/lib/analysis/summary";
 import { withApi } from "@/lib/api/route";
-import { timedMetricAsync } from "@/lib/api/metrics";
-import {
-  buildFallbackContext,
-  resolveFallbackOptions,
-  runFallback,
-} from "@/lib/llm/fallback";
-import type { ErrorType } from "@/types";
+import { runAnalyze } from "@/lib/tools/runners";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +18,9 @@ export const dynamic = "force-dynamic";
  *
  * Body: { "logs": ["..."], "system": "optional hint" } (single log works too)
  * Privacy: sensitive values are masked unless PST_REDACT=off.
+ *
+ * Implementation lives in src/lib/tools/runners.ts (shared with the MCP
+ * server) so the two surfaces cannot drift.
  */
 export async function POST(request: NextRequest) {
   return withApi(
@@ -43,124 +32,7 @@ export async function POST(request: NextRequest) {
         logs?: unknown;
         system?: unknown;
       };
-      const logs = parseLogsInput(raw);
-      const system = typeof raw.system === "string" ? raw.system.trim().slice(0, 100) : "";
-
-      const masking = process.env.PST_REDACT !== "off";
-      const masked = masking
-        ? redactSensitiveValues(logs.join("\n"))
-        : { text: logs.join("\n"), maskedKeys: [] as string[] };
-
-      const info = extractLogInfo(masked.text);
-
-      // Scoped custom rules: only rules whose scope matches this analysis run.
-      const customRules = toLogRules(
-        listCustomRules(true).filter((rule) =>
-          scopeMatches(rule.scope, {
-            system: system ?? undefined,
-            components: info.components,
-          }),
-        ),
-      );
-
-      const analysis = analyzeLog(masked.text, info, customRules);
-      const dossier = loadIncidentDossier(system);
-      const fallbackOptions = resolveFallbackOptions(process.env);
-
-      // Hybrid fallback: no rule matched -> optional AI fills the analysis.
-      let analysisSource: "rules" | "ai-fallback" = "rules";
-      let aiFallback: {
-        cached: boolean;
-        durationMs?: number;
-        model?: string | null;
-        confidence: number;
-      } | null = null;
-      let aiFallbackError: string | null = null;
-
-      if (analysis.matchedRuleIds.length === 0) {
-        if (fallbackOptions.enabled) {
-          const { result: outcome } = await timedMetricAsync("ai_fallback", () =>
-            runFallback(
-              {
-                lines: buildFallbackContext(masked.text),
-                levels: info.levels,
-                components: info.components,
-                exceptions: info.exceptions,
-                httpStatuses: info.httpStatuses,
-              },
-              fallbackOptions,
-            ),
-          );
-          if (outcome.ok && outcome.analysis) {
-            const fb = outcome.analysis;
-            analysisSource = "ai-fallback";
-            analysis.severity = fb.severity;
-            analysis.errorTypes = fb.errorTypes as unknown as ErrorType[];
-            analysis.rootCauses = fb.rootCauses;
-            analysis.rootCausesZh = fb.rootCausesZh;
-            analysis.immediateInvestigation = fb.immediateInvestigation;
-            analysis.immediateInvestigationZh = fb.immediateInvestigationZh;
-            analysis.suggestedFixes = fb.suggestedFixes;
-            analysis.suggestedFixesZh = fb.suggestedFixesZh;
-            analysis.longTermImprovements = fb.longTermImprovements;
-            analysis.longTermImprovementsZh = fb.longTermImprovementsZh;
-            aiFallback = {
-              cached: outcome.cached ?? false,
-              durationMs: outcome.durationMs,
-              model: outcome.model,
-              confidence: fb.confidence,
-            };
-          } else {
-            aiFallbackError = outcome.error ?? "AI fallback unavailable.";
-          }
-        } else {
-          aiFallbackError =
-            "AI fallback disabled (set PST_AI_FALLBACK=true and OPENROUTER_API_KEY).";
-        }
-      }
-
-      const a = analysis;
-      return {
-        severity: a.severity,
-        errorTypes: a.errorTypes,
-        affectedComponents: a.affectedComponents,
-        rootCauses: a.rootCauses,
-        rootCausesZh: a.rootCausesZh ?? a.rootCauses,
-        immediateInvestigation: a.immediateInvestigation,
-        immediateInvestigationZh: a.immediateInvestigationZh ?? a.immediateInvestigation,
-        suggestedFixes: a.suggestedFixes,
-        suggestedFixesZh: a.suggestedFixesZh ?? a.suggestedFixes,
-        longTermImprovements: a.longTermImprovements,
-        longTermImprovementsZh: a.longTermImprovementsZh ?? a.longTermImprovements,
-        matchedRuleIds: a.matchedRuleIds,
-        evidence: a.matchedEvidence,
-        skippedRules: a.skippedRules ?? [],
-        unknownTriage: a.unknownTriage,
-        extracted: {
-          timestamps: info.timestamps,
-          levels: info.levels,
-          components: info.components,
-          identifiers: info.identifiers,
-          exceptions: info.exceptions,
-          sources: info.sources,
-          httpStatuses: info.httpStatuses,
-          stackTrace: info.stackTrace,
-        },
-        maskedKeys: masked.maskedKeys,
-        logCount: logs.length,
-        dossierCount: dossier.length,
-        appliedCustomRules: analysis.matchedRuleIds
-          .filter((id) => id.startsWith("custom:"))
-          .map((id) => {
-            const rule = customRules.find((r) => r.id === id);
-            return { id, name: rule?.name ?? id };
-          }),
-        summary: buildLogSummary(masked.text, customRules),
-        analysisSource,
-        aiFallbackConfigured: fallbackOptions.enabled,
-        aiFallback,
-        aiFallbackError,
-      };
+      return runAnalyze(raw);
     },
   );
 }

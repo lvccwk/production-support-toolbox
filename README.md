@@ -290,6 +290,66 @@ list `bearerAuth`), so an agent can onboard without reading this page.
   reading this README.
 - Both surfaces (GUI + API) share the same tested logic under `src/lib/`.
 
+## MCP server（原生 AI agent 通道）
+
+Claude Code / Cursor / opencode /任何支援 MCP 嘅 agent 可以直接用呢六個工具 — 唔使
+read OpenAPI,唔使 curl。`src/mcp/server.ts` 用 MCP SDK 包住 **同一套 shared
+runners**(`src/lib/tools/runners.ts`,同 `/api/tools/*` 完全一樣嘅邏輯,零 drift):
+
+| MCP tool | 對應 HTTP API | 功能 |
+| --- | --- | --- |
+| `analyze` | `POST /api/tools/analyze` | rule-engine log 分析(雙語輸出 + opt-in AI fallback) |
+| `compare` | `POST /api/tools/compare` | before/after log 對比 + regression verdict |
+| `json` | `POST /api/tools/json` | format / validate / minify / search |
+| `sql` | `POST /api/tools/sql` | format / safety / analyze(text-only,唔會執行) |
+| `timestamp` | `POST /api/tools/timestamp` | Unix / ISO / UTC / timezone 換算 |
+| `encoding` | `POST /api/tools/encoding` | Base64 / URL encode-decode |
+
+**執行:**
+
+```bash
+npm run mcp        # stdio MCP server(內部:tsx src/mcp/server.ts)
+```
+
+啟動時會讀取專案根目錄嘅 `.env`(同 web server 一樣嘅 PST_* 設定會生效,包括
+`PST_AI_FALLBACK`),並共用同一個 `data/app.db`(WAL 模式,web server 同 MCP 可以
+同時行) — 所以 custom rules、incident dossier、AI fallback cache 同 API 完全一致。
+回應格式係 `{ ok, data }` / `{ ok, error: { code, message } }`,同 HTTP API 相同。
+
+**接駁 Claude Code**(專案根目錄 `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "pst-toolbox": {
+      "command": "npm",
+      "args": ["run", "mcp"],
+      "cwd": "/absolute/path/to/production-support-toolbox"
+    }
+  }
+}
+```
+
+**接駁 Cursor**(`.cursor/mcp.json`):同上一個結構。
+
+**接駁 opencode**:
+
+```json
+{
+  "mcp": {
+    "pst-toolbox": {
+      "type": "local",
+      "command": ["npm", "run", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+注意:用 stdio config 時 `cwd` 必須指向 toolbox 專案根目錄(佢需要讀 `.env` 同
+`data/app.db`)。MCP 只提供六個 stateless 工具;data endpoints(incidents/history/
+rules/alerts)保持 HTTP-only(見 Agent API)。
+
 ## Scoped custom rules (teach the engine your system)
 
 The 27 built-in rules cover generic failure patterns. Your systems and
@@ -420,9 +480,11 @@ production-support-toolbox/
       sql/                   # formatter, safety checker, analyzer
       timestamp/             # Unix/ISO/UTC/timezone conversion (Intl only)
       encoding/              # base64 / URL encode/decode
+      tools/                 # SHARED tool runners — the single implementation behind BOTH /api/tools/* and MCP
       sensitive/             # sensitive-data keyword detection
       llm/                   # shared server helpers (redact, dossier, log input validation)
       errors.ts              # shared ToolError
+    mcp/                     # MCP stdio server (Claude Code / Cursor / opencode) over the shared runners
     types/                   # shared TypeScript types
   data/                      # SQLite database (created on first run, gitignored)
 ```
