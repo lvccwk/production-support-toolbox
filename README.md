@@ -6,20 +6,49 @@ perform common support tasks. Everything is **deterministic, local and
 free** — no AI, no external services, nothing leaves the machine.
 
 Built with **Next.js + TypeScript + Tailwind CSS + SQLite (`better-sqlite3`)**.
-No database server, no Docker, no Redis, no Kubernetes, no external
-authentication.
+No database server, no Redis, no Kubernetes, no external authentication.
+Docker is optional (a convenience fallback — the primary path needs only
+Node.js).
 
 ---
 
 ## Setup
 
+One command, no prior knowledge required. You need **Node.js ≥ 20 (LTS)**
+(or Docker, as a fallback — see below).
+
+| Platform | Command |
+| --- | --- |
+| macOS / Linux | `./scripts/setup.sh` |
+| Windows | `setup.bat` (double-click, or run in cmd/PowerShell) |
+| 任何平台(已有 Node) | `npm run setup` |
+
+Each variant does the same thing: checks the Node version → `npm install`
+(with an automatic fallback to a project-local npm cache if the global npm
+cache is broken) → creates `.env` from `.env.example` if missing → makes sure
+`data/` exists. Then start the app:
+
 ```bash
-npm install
 npm run dev
 ```
 
-Open http://localhost:3000. The application works fully offline after
-installation.
+Open http://localhost:3000. The first page is a **Welcome screen** with a
+"30-second demo" button (analyses a bundled sample log) and a card grid of
+all tools — new users can see value before reading any docs. Returning users
+land back on the tool they used last time.
+
+> **Windows:** `better-sqlite3` is a native module; it normally ships a
+> prebuilt binary so no compiler is needed, and the GitHub CI
+> (`windows-smoke` workflow) verifies this on every PR. If you ever hit a
+> `node-gyp` / build-tools error, see [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md).
+
+> **Docker (optional fallback):** if a colleague has Docker but can't or
+> won't install Node — `docker compose up -d`, then open
+> http://localhost:3000. Data is kept in `./data` via a volume. See
+> [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) too for when this is the
+> easiest path on Windows.
+
+The application works fully offline after installation.
 
 > ## ⚠️ Deployment warning
 >

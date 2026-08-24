@@ -3,6 +3,11 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { SeverityBadge } from "@/components/ui";
 import { DISABLED_FEATURES } from "@/lib/features";
+import { SAMPLE_CRASH_LOG } from "@/features/welcome/sample-log";
+
+const Welcome = lazy(() =>
+  import("@/features/welcome/Welcome").then((m) => ({ default: m.Welcome })),
+);
 
 const LogAnalyzer = lazy(() =>
   import("@/features/log-analyzer/LogAnalyzer").then((m) => ({ default: m.LogAnalyzer })),
@@ -75,10 +80,23 @@ const TOOLS: ToolDefinition[] = [
 // 因為下面 activeTool 用完整 TOOLS 嚟解析 —— 純粹收埋入口，唔係移除）。
 const ENABLED_TOOLS = TOOLS.filter((t) => !DISABLED_FEATURES.includes(t.id));
 
+// 首頁(Welcome)唔係一個「工具」:唔入側邊欄,只做預設落腳點。
+const HOME_ID = "home";
+const LAST_VIEW_KEY = "pst-last-view";
+
 function toolIdFromHash(): string {
   const m = window.location.hash.match(/^#\/([a-z-]+)/);
   const id = m?.[1] ?? "";
-  return TOOLS.some((t) => t.id === id) ? id : "log-analyzer";
+  return TOOLS.some((t) => t.id === id) ? id : "";
+}
+
+function lastView(): string {
+  try {
+    const v = localStorage.getItem(LAST_VIEW_KEY);
+    return v && TOOLS.some((t) => t.id === v) ? v : "";
+  } catch {
+    return "";
+  }
 }
 
 function ThemeToggle() {
@@ -118,20 +136,31 @@ function ThemeToggle() {
 }
 
 export function AppShell() {
-  const [activeId, setActiveId] = useState<string>("log-analyzer");
+  const [activeId, setActiveId] = useState<string>(HOME_ID);
   const [reopen, setReopen] = useState<ReopenRequest | null>(null);
 
   const navigate = useCallback((id: string) => {
     setActiveId(id);
     setReopen(null);
+    if (id === HOME_ID) {
+      // 回主頁 = 清走 hash,等瀏覽器個 hashchange 同步。
+      if (window.location.hash) window.location.hash = "";
+      return;
+    }
+    try {
+      localStorage.setItem(LAST_VIEW_KEY, id);
+    } catch {
+      /* ignore */
+    }
     if (window.location.hash !== `#/${id}`) {
       window.location.hash = `#/${id}`;
     }
   }, []);
 
+  // 首次入來:hash 優先 → 上次用過嘅工具 → 歡迎頁。
   useEffect(() => {
-    setActiveId(toolIdFromHash());
-    const onHashChange = () => setActiveId(toolIdFromHash());
+    setActiveId(toolIdFromHash() || lastView() || HOME_ID);
+    const onHashChange = () => setActiveId(toolIdFromHash() || HOME_ID);
     // Support History dispatches this to re-open a saved analysis.
     const onReopen = (event: Event) => {
       const detail = (event as CustomEvent<{ tool: string; payload: unknown }>).detail;
@@ -147,8 +176,16 @@ export function AppShell() {
     };
   }, [navigate]);
 
-  const activeTool = TOOLS.find((t) => t.id === activeId) ?? TOOLS[0];
-  const ActiveComponent = activeTool.Component;
+  // 30 秒試玩:示範 log 直接預填進 Log Analyzer 並即刻分析。
+  const handleTrySample = useCallback(() => {
+    navigate("log-analyzer");
+    setReopen({ tool: "log-analyzer", payload: { input: SAMPLE_CRASH_LOG }, key: Date.now() });
+  }, [navigate]);
+
+  const activeTool = TOOLS.find((t) => t.id === activeId);
+  const headerName = activeTool?.name ?? "歡迎 / Welcome";
+  const headerBlurb =
+    activeTool?.blurb ?? "選一個工具開始,或者按「30 秒試玩」睇示範";
 
   return (
     <div className="min-h-screen lg:flex">
@@ -172,6 +209,7 @@ export function AppShell() {
               className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
               aria-label="Choose tool"
             >
+              <option value={HOME_ID}>首頁 / Welcome</option>
               {ENABLED_TOOLS.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -181,6 +219,25 @@ export function AppShell() {
           </div>
 
           <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2" aria-label="Tools">
+            <button
+              onClick={() => navigate(HOME_ID)}
+              className={`block w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                activeId === HOME_ID
+                  ? "bg-blue-600 font-medium text-white shadow-sm dark:bg-blue-500"
+                  : "text-zinc-700 hover:bg-zinc-200/70 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              }`}
+            >
+              <span className="block">首頁 / Welcome</span>
+              <span
+                className={`block truncate text-[11px] ${
+                  activeId === HOME_ID
+                    ? "text-blue-100 dark:text-blue-100"
+                    : "text-zinc-500 dark:text-zinc-500"
+                }`}
+              >
+                新手由此開始
+              </span>
+            </button>
             {ENABLED_TOOLS.map((tool) => {
               const active = tool.id === activeId;
               return (
@@ -223,9 +280,9 @@ export function AppShell() {
         <header className="mb-4 flex flex-wrap items-start justify-between gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
           <div>
             <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
-              {activeTool.name}
+              {headerName}
             </h2>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">{activeTool.blurb}</p>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">{headerBlurb}</p>
           </div>
         </header>
         <Suspense
@@ -235,7 +292,15 @@ export function AppShell() {
             </div>
           }
         >
-          <ActiveComponent key={activeTool.id} reopen={reopen ?? undefined} />
+          {activeTool ? (
+            <activeTool.Component key={activeTool.id} reopen={reopen ?? undefined} />
+          ) : (
+            <Welcome
+              tools={ENABLED_TOOLS}
+              onOpen={navigate}
+              onTrySample={handleTrySample}
+            />
+          )}
         </Suspense>
       </main>
     </div>

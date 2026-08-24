@@ -1,0 +1,29 @@
+name: Windows smoke
+
+# 持續驗證 better-sqlite3 喺 Windows 上有 prebuilt:
+# 每個 PR / push 都喺 windows-latest 行 install + typecheck + test + build。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install (native module prebuild check)
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build

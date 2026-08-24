@@ -14,7 +14,11 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "eval": "tsx scripts/eval.ts",
-    "mcp": "tsx src/mcp/server.ts"
+    "mcp": "tsx src/mcp/server.ts",
+    "setup": "node scripts/setup.mjs"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
