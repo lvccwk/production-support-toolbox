@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pst-toolbox": {
+      "type": "stdio",
+      "command": "npm",
+      "args": [
+        "run",
+        "mcp"
+      ],
+      "env": {}
+    }
+  }
+}
