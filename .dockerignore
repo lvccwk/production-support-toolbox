@@ -1,0 +1,13 @@
+node_modules
+.next
+data
+backups
+.cache
+.git
+.env
+.env.local
+*.docx
+.DS_Store
+opencode-workdir
+coverage
+docs/*.md

@@ -1,0 +1,30 @@
+# Production Support Toolbox — 一鍵 Docker 起機(後備方案)
+#   前置: 裝 Docker Desktop(macOS/Windows)或 docker engine (Linux)
+#   用法:  docker compose up -d
+#   打開:  http://127.0.0.1:3000
+# 數據會永久保存在 ./data(volume mount),restart 唔會消失。
+services:
+  toolbox:
+    build: .
+    image: pst-toolbox:latest
+    container_name: pst-toolbox
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      # AI fallback(可選): 想喺容器入面用 AI 分析,抄 .env 嘅 PST_* 過嚟,例如:
+      # - PST_AI_FALLBACK=true
+      # - PST_OPNCODE_BIN=/app/.opencode/bin/opencode  (容器內要另外 mount)
+      - PST_REMOTE_ACCESS=${PST_REMOTE_ACCESS:-false}
+      - PST_API_TOKEN=${PST_API_TOKEN:-}
+      - PST_API_TOKEN_READ=${PST_API_TOKEN_READ:-}
+    command: ["npx", "next", "start", "-H", "0.0.0.0"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

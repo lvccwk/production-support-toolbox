@@ -16,6 +16,12 @@ data/
 .env
 .env.local
 
+# setup.mjs project-local npm cache fallback
+.cache/
+
+# legacy docx deliverables (md only now)
+*.docx
+
 # misc
 .DS_Store
 *.tsbuildinfo
